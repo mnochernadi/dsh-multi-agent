@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+pnpm-lock.yaml
+yarn.lock
+
+# dashboard state (settings, run history, generated patches)
+.dsh-multi-agent/
+
+# local env / secrets — never commit
+.env
+.env.local
+.env.*.local
+*.credentials.yaml
+
+# logs & temp
+*.log
+npm-debug.log*
+logs/
+tmp/
+temp/
+
+# editors / os
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

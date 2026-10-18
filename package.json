@@ -1,0 +1,50 @@
+{
+  "name": "dsh-multi-agent",
+  "version": "0.1.0",
+  "description": "Multi-agent orchestration dashboard for DeepSeek Harness: choose a provider/model per agent, run dashboard pipelines or native subagent teams, and watch every event live.",
+  "type": "module",
+  "license": "MIT",
+  "author": "mnochernadi",
+  "homepage": "https://github.com/mnochernadi/dsh-multi-agent#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mnochernadi/dsh-multi-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mnochernadi/dsh-multi-agent/issues"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "multi-agent",
+    "orchestration",
+    "dashboard",
+    "llm",
+    "subagent"
+  ],
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "bin": {
+    "dsh-multi-agent": "src/index.ts"
+  },
+  "files": [
+    "src",
+    "public",
+    "docs",
+    "README.md",
+    "README.fa.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node src/index.ts",
+    "dev": "node --watch src/index.ts",
+    "start:legacy": "node --experimental-strip-types src/index.ts",
+    "test": "node test/all.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
