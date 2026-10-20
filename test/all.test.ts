@@ -11,4 +11,6 @@ import './patch.test.ts';
 import './plan.test.ts';
 import './settings.test.ts';
 import './events.test.ts';
+import './engines.test.ts';
+import './engine-run.test.ts';
 import './i18n.test.ts';

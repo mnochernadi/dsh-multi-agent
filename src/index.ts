@@ -59,7 +59,7 @@ function packageVersion(): string {
 function printHelp(): void {
   process.stdout.write(
     [
-      'dsh-multi-agent — a multi-agent dashboard for DeepSeek Harness',
+      'dsh-multi-agent — a multi-agent dashboard for DeepSeek Harness and any headless agent CLI',
       '',
       'Usage: dsh-multi-agent [options]',
       '',
@@ -74,8 +74,10 @@ function printHelp(): void {
       'Environment (see .env.example): DSH_MA_DSH_BIN, DSH_MA_DASHBOARD_PORT,',
       'DSH_MA_RUN_CWD, DSH_MA_MAX_CONCURRENCY, DSH_MA_TRUST_STORED_CREDENTIALS.',
       '',
-      'Each agent runs as a real `dsh --profile headless` process, so the model,',
-      'tools, and credentials are exactly the ones DeepSeek Harness uses.',
+      'Each agent runs as a real process on the engine you pick for it:',
+      '`dsh --profile headless` with a generated Cordis patch, or any headless',
+      'agent CLI such as Claude Code, Gemini CLI, or Codex. Installed engines are',
+      'detected automatically; use Test in Settings to prove one really answers.',
       '',
     ].join('\n'),
   );

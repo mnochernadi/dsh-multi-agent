@@ -5,12 +5,17 @@ import { publicDir, stateRoot } from '../config/paths.ts';
 import { keyAvailability } from '../config/discover.ts';
 import { createLogger } from '../util/log.ts';
 import type { Launcher } from '../dsh/launcher.ts';
-import type { DashboardSettings, RunRequest } from '../types.ts';
+import type { AgentSpec, DashboardSettings, RunRequest } from '../types.ts';
 import type { Orchestrator } from '../orchestrator/engine.ts';
 import type { EventHub } from './events.ts';
 import { buildRunPatch, writeRunPatch } from '../dsh/patch.ts';
 import { verifyPatch } from '../dsh/runner.ts';
 import { newId } from '../util/ids.ts';
+import { detectEngine, healthCheckEngine, handoffToIde, invalidateDetection } from '../engines/detect.ts';
+import { builtinEngines, DSH_ENGINE_ID } from '../engines/presets.ts';
+import { normalizeEngine, hiddenPresets, resolveEngines, slugifyEngineId, validateEngine } from '../engines/registry.ts';
+import { OUTPUT_FORMATS } from '../engines/parsers.ts';
+import type { EngineDetection, EngineDefinition } from '../engines/types.ts';
 
 const log = createLogger('server');
 
@@ -141,6 +146,138 @@ async function handleApi(
       return;
     }
     sendMethodNotAllowed(res, ['GET', 'PUT']);
+    return;
+  }
+
+  if (pathname === '/api/engines') {
+    if (method === 'GET') {
+      sendJson(res, 200, {
+        engines: await describeEngines(deps),
+        hidden: hiddenPresets(deps.getSettings().engines),
+        outputFormats: OUTPUT_FORMATS,
+      });
+      return;
+    }
+    if (method === 'PUT' || method === 'POST') {
+      const body = (await readJsonBody(req)) as { id?: unknown; engine?: unknown };
+      const raw = (body.engine ?? body) as Record<string, unknown>;
+      const settings = deps.getSettings();
+      const id = slugifyEngineId(String(raw.id ?? ''));
+      if (id === '') {
+        sendJson(res, 400, { error: 'An engine needs an id.' });
+        return;
+      }
+      const existing = resolveEngines(settings.engines).find((engine) => engine.id === id);
+      const normalized = normalizeEngine({ ...raw, id }, existing);
+      if (!normalized) {
+        sendJson(res, 400, { error: 'The engine definition could not be read.' });
+        return;
+      }
+      const problems = validateEngine(normalized);
+      const saved = deps.saveSettings({
+        ...settings,
+        engines: { ...settings.engines, [id]: normalized },
+      });
+      invalidateDetection(id);
+      sendJson(res, 200, { settings: saved, engines: await describeEngines(deps), problems });
+      return;
+    }
+    sendMethodNotAllowed(res, ['GET', 'PUT']);
+    return;
+  }
+
+  const engineRestoreMatch = /^\/api\/engines\/([^/]+)\/restore$/.exec(pathname);
+  if (engineRestoreMatch && method === 'POST') {
+    const id = engineRestoreMatch[1]!;
+    const settings = deps.getSettings();
+    const engines = { ...settings.engines };
+    delete engines[id];
+    const saved = deps.saveSettings({ ...settings, engines });
+    invalidateDetection(id);
+    sendJson(res, 200, {
+      settings: saved,
+      engines: await describeEngines(deps),
+      hidden: hiddenPresets(saved.engines),
+    });
+    return;
+  }
+
+  const engineDetectMatch = /^\/api\/engines\/([^/]+)\/detect$/.exec(pathname);
+  if (engineDetectMatch && method === 'POST') {
+    const settings = deps.getSettings();
+    const engine = resolveEngines(settings.engines).find((entry) => entry.id === engineDetectMatch[1]!);
+    if (!engine) {
+      sendJson(res, 404, { error: 'Unknown engine.' });
+      return;
+    }
+    const detection = await detectEngine(engine, { dshBin: settings.dsh.bin, force: true });
+    sendJson(res, 200, { detection });
+    return;
+  }
+
+  const engineTestMatch = /^\/api\/engines\/([^/]+)\/test$/.exec(pathname);
+  if (engineTestMatch && method === 'POST') {
+    const settings = deps.getSettings();
+    const engine = resolveEngines(settings.engines).find((entry) => entry.id === engineTestMatch[1]!);
+    if (!engine) {
+      sendJson(res, 404, { error: 'Unknown engine.' });
+      return;
+    }
+    const detection = await detectEngine(engine, { dshBin: settings.dsh.bin, force: true });
+    const result = await healthCheckEngine(engine, detection, {
+      cwd: settings.dsh.runCwd,
+      dshBin: settings.dsh.bin,
+    });
+    sendJson(res, 200, { detection, result });
+    return;
+  }
+
+  const engineHandoffMatch = /^\/api\/engines\/([^/]+)\/handoff$/.exec(pathname);
+  if (engineHandoffMatch && method === 'POST') {
+    const body = (await readJsonBody(req)) as { cwd?: unknown };
+    const settings = deps.getSettings();
+    const engine = resolveEngines(settings.engines).find((entry) => entry.id === engineHandoffMatch[1]!);
+    if (!engine) {
+      sendJson(res, 404, { error: 'Unknown engine.' });
+      return;
+    }
+    const detection = await detectEngine(engine, { dshBin: settings.dsh.bin });
+    const cwd = typeof body.cwd === 'string' && body.cwd.trim() !== '' ? body.cwd.trim() : settings.dsh.runCwd;
+    const result = handoffToIde(engine, detection, cwd);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
+  const engineMatch = /^\/api\/engines\/([^/]+)$/.exec(pathname);
+  if (engineMatch) {
+    const id = engineMatch[1]!;
+    const settings = deps.getSettings();
+    if (method === 'GET') {
+      const engine = resolveEngines(settings.engines).find((entry) => entry.id === id);
+      if (!engine) {
+        sendJson(res, 404, { error: 'Unknown engine.' });
+        return;
+      }
+      const detection = await detectEngine(engine, { dshBin: settings.dsh.bin, force: true });
+      sendJson(res, 200, { engine, detection });
+      return;
+    }
+    if (method === 'DELETE') {
+      const engines = { ...settings.engines };
+      const isBuiltin = builtinEngines.some((engine) => engine.id === id);
+      // A built-in preset is hidden rather than deleted, so it can come back.
+      if (isBuiltin) engines[id] = { removed: true };
+      else delete engines[id];
+      const saved = deps.saveSettings({ ...settings, engines });
+      invalidateDetection(id);
+      sendJson(res, 200, {
+        settings: saved,
+        engines: await describeEngines(deps),
+        hidden: hiddenPresets(saved.engines),
+      });
+      return;
+    }
+    sendMethodNotAllowed(res, ['GET', 'DELETE']);
     return;
   }
 
@@ -324,6 +461,70 @@ async function handleApi(
 
 /* ------------------------------------------------------------------ utilities */
 
+export interface EngineView {
+  id: string;
+  label: string;
+  kind: EngineDefinition['kind'];
+  builtin: boolean;
+  enabled: boolean;
+  description: string | null;
+  homepage: string | null;
+  availability: EngineDetection['availability'];
+  executablePath: string | null;
+  version: string | null;
+  message: string;
+  candidatesTried: string[];
+  outputFormat: string;
+  promptViaStdin: boolean;
+  argsTemplate: string[];
+  extraArgs: string[];
+  models: { id: string; name?: string }[];
+  commands: string[];
+  searchGlobs: string[];
+  healthArgsTemplate: string[];
+  healthPrompt: string | null;
+  handoffArgs: string[];
+  canHandoff: boolean;
+  canRun: boolean;
+}
+
+/** Engines plus their live detection state, for the settings UI. */
+async function describeEngines(deps: ServerDeps): Promise<EngineView[]> {
+  const settings = deps.getSettings();
+  const engines = resolveEngines(settings.engines);
+  const views: EngineView[] = [];
+  for (const engine of engines) {
+    const detection = await detectEngine(engine, { dshBin: settings.dsh.bin });
+    views.push({
+      id: engine.id,
+      label: engine.label,
+      kind: engine.kind,
+      builtin: engine.builtin,
+      enabled: engine.enabled,
+      description: engine.description ?? null,
+      homepage: engine.homepage ?? null,
+      availability: detection.availability,
+      executablePath: detection.executablePath,
+      version: detection.version,
+      message: detection.message,
+      candidatesTried: detection.candidatesTried,
+      outputFormat: engine.run.outputFormat,
+      promptViaStdin: engine.run.promptViaStdin,
+      argsTemplate: engine.run.argsTemplate,
+      extraArgs: engine.run.extraArgs ?? [],
+      models: (engine.run.models ?? []).map((model) => ({ id: model.id, name: model.name })),
+      commands: engine.detect.commands,
+      searchGlobs: engine.detect.searchGlobs ?? [],
+      healthArgsTemplate: engine.run.healthArgsTemplate ?? [],
+      healthPrompt: engine.run.healthPrompt ?? null,
+      handoffArgs: engine.handoff?.argsTemplate ?? [],
+      canHandoff: Boolean(engine.handoff),
+      canRun: engine.enabled && engine.kind !== 'ide',
+    });
+  }
+  return views;
+}
+
 /**
  * Where a provider's key is expected to come from.
  *
@@ -363,13 +564,30 @@ function describeProviders(settings: DashboardSettings): unknown[] {
 function validateRunRequest(body: Partial<RunRequest>): string | null {
   if (typeof body.task !== 'string' || body.task.trim() === '') return 'A non-empty `task` is required.';
   if (!body.main || typeof body.main !== 'object') return '`main` (the lead agent) is required.';
-  if (!body.main.model || typeof body.main.model.provider !== 'string' || body.main.model.provider === '') {
-    return 'The lead agent needs a provider.';
-  }
-  if (typeof body.main.model.model !== 'string' || body.main.model.model === '') {
-    return 'The lead agent needs a model.';
-  }
+  const mainProblem = validateAgentModel(body.main);
+  if (mainProblem) return `The lead agent: ${mainProblem}`;
   if (body.subs !== undefined && !Array.isArray(body.subs)) return '`subs` must be an array.';
+  for (const sub of body.subs ?? []) {
+    const problem = validateAgentModel(sub);
+    if (problem) return `Sub-agent "${sub?.name ?? sub?.id ?? '?'}": ${problem}`;
+  }
+  return null;
+}
+
+/**
+ * A DSH agent needs a provider *and* a model. An agent on another engine does
+ * not: its model is optional (the CLI's own default applies).
+ */
+function validateAgentModel(agent: Partial<AgentSpec> | undefined): string | null {
+  if (!agent || typeof agent !== 'object') return 'the agent definition is missing.';
+  const engine = typeof agent.engine === 'string' ? agent.engine.trim() : '';
+  if (engine !== '' && engine !== DSH_ENGINE_ID) return null;
+  if (!agent.model || typeof agent.model.provider !== 'string' || agent.model.provider === '') {
+    return 'choose a provider (or switch this agent to a command-line engine).';
+  }
+  if (typeof agent.model.model !== 'string' || agent.model.model === '') {
+    return 'choose a model (or switch this agent to a command-line engine).';
+  }
   return null;
 }
 
@@ -435,10 +653,16 @@ function sendMethodNotAllowed(res: ServerResponse, allowed: string[]): void {
 /** Serve the no-build frontend, refusing anything outside `public/`. */
 function serveStatic(res: ServerResponse, pathname: string): void {
   const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
-  const target = path.resolve(publicDir, relative);
-  if (!target.startsWith(path.resolve(publicDir))) {
-    sendJson(res, 403, { error: 'Forbidden.' });
-    return;
+  const root = path.resolve(publicDir);
+  const target = path.resolve(root, relative);
+  // A plain `startsWith(root)` would also accept a sibling directory such as
+  // `/app/public-evil`, so compare the relative path instead.
+  const withinRoot = path.relative(root, target);
+  if (withinRoot === '' || withinRoot.startsWith('..') || path.isAbsolute(withinRoot)) {
+    if (withinRoot !== '') {
+      sendJson(res, 403, { error: 'Forbidden.' });
+      return;
+    }
   }
   let file = target;
   if (!existsSync(file) || statSync(file).isDirectory()) {

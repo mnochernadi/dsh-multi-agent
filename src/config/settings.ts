@@ -37,6 +37,7 @@ export function defaultSettings(): DashboardSettings {
       direction: envValue('DSH_MA_LANGUAGE') === 'en' ? 'ltr' : 'rtl',
     },
     providers: {},
+    engines: {},
     roster: {
       main: {
         id: 'main',
@@ -97,6 +98,7 @@ export function normalizeSettings(raw: unknown): DashboardSettings {
       direction: input.ui?.direction === 'ltr' ? 'ltr' : input.ui?.direction === 'rtl' ? 'rtl' : base.ui.direction,
     },
     providers: normalizeCatalogue(input.providers),
+    engines: normalizeEngineOverrides(input.engines),
     roster: normalizeRoster(input.roster, base.roster),
   };
   settings.ui.direction = settings.ui.language === 'en' ? 'ltr' : 'rtl';
@@ -111,6 +113,25 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   const num = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(num)) return fallback;
   return Math.min(max, Math.max(min, Math.trunc(num)));
+}
+
+/**
+ * Engine overrides are stored raw, exactly as the user wrote them.
+ *
+ * They are intentionally *not* expanded into full definitions here: settings
+ * should keep only the differences, so an improved built-in preset still
+ * reaches a user who once edited one field. The registry does the merging.
+ */
+export function normalizeEngineOverrides(raw: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = key.trim();
+    if (id === '') continue;
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    out[id] = value;
+  }
+  return out;
 }
 
 export function normalizeCatalogue(raw: unknown): ProviderCatalogue {
@@ -164,6 +185,10 @@ function normalizeAgent(
     name: str(input.name, defaultName) || defaultName,
     role: input.role === 'main' ? 'main' : 'sub',
     model,
+    ...(typeof input.engine === 'string' && input.engine.trim() !== ''
+      ? { engine: input.engine.trim() }
+      : {}),
+    ...(typeof input.cliModel === 'string' ? { cliModel: input.cliModel } : {}),
     ...(typeof input.instructions === 'string' ? { instructions: input.instructions } : {}),
     ...(typeof input.personaPrefix === 'string' ? { personaPrefix: input.personaPrefix } : {}),
     ...(Array.isArray(input.dependsOn) ? { dependsOn: input.dependsOn.map(String) } : {}),

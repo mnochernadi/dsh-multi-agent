@@ -21,6 +21,10 @@ import { api, openEventStream } from './api.js';
 const state = {
   settings: null,
   providers: [],
+  engines: [],
+  engineDrafts: new Map(),
+  engineTests: new Map(),
+  hiddenEngines: [],
   info: null,
   stateDir: null,
   providersMeta: { sources: [], warnings: [] },
@@ -138,7 +142,7 @@ async function bootstrap() {
     state.runs = runsResponse.runs;
     if (!stored && state.settings?.ui?.language) setLang(state.settings.ui.language);
     hydrateFromSettings();
-    await refreshProviders();
+    await Promise.all([refreshProviders(), refreshEngines()]);
     render();
   } catch (error) {
     notify(String(error.message ?? error), 'error');
@@ -161,6 +165,49 @@ async function refreshProviders() {
   } catch (error) {
     notify(String(error.message ?? error), 'error');
   }
+}
+
+async function refreshEngines(force = false) {
+  try {
+    const response = await api.listEngines();
+    state.engines = response.engines ?? [];
+    state.hiddenEngines = response.hidden ?? [];
+    if (force) invalidateDrafts();
+  } catch (error) {
+    notify(String(error.message ?? error), 'error');
+  }
+}
+
+function invalidateDrafts() {
+  state.engineDrafts.clear();
+}
+
+function engineById(id) {
+  const key = id && id !== '' ? id : 'dsh';
+  return state.engines.find((engine) => engine.id === key) ?? null;
+}
+
+function runnableEngines() {
+  return state.engines.filter((engine) => engine.canRun);
+}
+
+/** How an agent's engine + model should be summarised in the UI. */
+function agentEngineLabel(agent) {
+  const engine = engineById(agent.engine);
+  if (!engine) return agent.engine ?? 'dsh';
+  if (engine.kind === 'dsh') {
+    return `${engine.label} · ${agent.model?.provider ?? '—'} / ${agent.model?.model ?? '—'}`;
+  }
+  return `${engine.label}${agent.cliModel ? ` · ${agent.cliModel}` : ''}`;
+}
+
+function defaultEngineChoice() {
+  const dsh = engineById('dsh');
+  if (dsh && dsh.availability !== 'missing') return 'dsh';
+  const ready = runnableEngines().find((engine) => engine.availability === 'ready');
+  if (ready) return ready.id;
+  const installed = runnableEngines().find((engine) => engine.availability === 'installed');
+  return installed ? installed.id : 'dsh';
 }
 
 /* ------------------------------------------------------------------- stream */
@@ -500,6 +547,100 @@ function renderRoster() {
 
 function agentEditor(agent, options) {
   const provider = providerOf(agent.model.provider);
+  const engineId = agent.engine ?? 'dsh';
+  const engine = engineById(engineId);
+  const isDsh = !engine || engine.kind === 'dsh';
+  const engineChoices = state.engines.filter((entry) => entry.kind !== 'ide' || entry.id === engineId);
+
+  const engineField = field(
+    t('agents.engine'),
+    h('select', {
+      onchange: (event) => {
+        agent.engine = event.target.value;
+        const next = engineById(event.target.value);
+        if (next && next.kind !== 'dsh') {
+          const current = agent.cliModel;
+          agent.cliModel = typeof current === 'string' ? current : '';
+        }
+        scheduleSettingsSave();
+        render();
+      },
+    },
+    engineChoices.length === 0
+      ? option(engineId, engineId, true)
+      : engineChoices.map((entry) =>
+          option(
+            entry.id,
+            `${entry.label} — ${t(`engines.availability.${entry.availability}`)}`,
+            entry.id === engineId,
+          ),
+        ),
+    ),
+    t('agents.engineHint'),
+  );
+
+  const modelRow = isDsh
+    ? h('div', { class: 'grid grid-3' },
+        field(t('agents.provider'), h('select', {
+          onchange: (event) => {
+            agent.model.provider = event.target.value;
+            const next = providerOf(event.target.value);
+            agent.model.model = next?.models[0]?.id ?? '';
+            agent.model.reasoningEffort = undefined;
+            scheduleSettingsSave();
+            render();
+          },
+        },
+        option('', '—', !agent.model.provider),
+        state.providers.map((entry) => option(entry.name, entry.displayName ?? entry.name, entry.name === agent.model.provider)),
+        )),
+        field(t('agents.model'), h('select', {
+          onchange: (event) => {
+            agent.model.model = event.target.value;
+            agent.model.reasoningEffort = undefined;
+            scheduleSettingsSave();
+            render();
+          },
+        },
+        option('', '—', !agent.model.model),
+        (provider?.models ?? []).map((model) => option(model.id, model.name ?? model.id, model.id === agent.model.model)),
+        )),
+        field(t('agents.effort'), h('select', {
+          onchange: (event) => {
+            agent.model.reasoningEffort = event.target.value || undefined;
+            scheduleSettingsSave();
+            render();
+          },
+        },
+        effortOptions(agent.model).map((effort) =>
+          option(effort, effort === '' ? t('agents.effortDefault') : effort, (agent.model.reasoningEffort ?? '') === effort)),
+        )),
+      )
+    : h('div', { class: 'grid grid-2' },
+        field(
+          t('agents.cliModel'),
+          h('input', {
+            type: 'text',
+            list: `engine-models-${agent.id}`,
+            value: agent.cliModel ?? '',
+            oninput: (event) => {
+              agent.cliModel = event.target.value;
+              scheduleSettingsSave();
+            },
+          }),
+          t('agents.cliModelHint'),
+        ),
+        h('datalist', { id: `engine-models-${agent.id}` },
+          (engine?.models ?? []).map((model) => h('option', { value: model.id }, model.name ?? model.id))),
+        engine && engine.executablePath
+          ? h('div', { class: 'engine-note' },
+              h('span', { class: `pill pill-avail-${engine.availability}` }, t(`engines.availability.${engine.availability}`)),
+              h('code', { class: 'small', text: engine.executablePath }),
+              engine.version ? h('span', { class: 'muted small', text: `v${engine.version}` }) : null)
+          : h('div', { class: 'engine-note' },
+              h('span', { class: 'muted small', text: engine ? engine.message : '' })),
+      );
+
   const card = h('article', { class: 'agent-editor' },
     h('div', { class: 'agent-editor-head' },
       h('input', {
@@ -512,6 +653,7 @@ function agentEditor(agent, options) {
         },
       }),
       h('span', { class: `pill pill-${options.role}` }, options.role === 'main' ? t('agents.main') : t('stage.work')),
+      h('span', { class: 'muted small', text: agentEngineLabel(agent) }),
       options.role === 'sub'
         ? h('label', { class: 'check small' },
             h('input', {
@@ -534,42 +676,8 @@ function agentEditor(agent, options) {
           }, t('agents.remove'))
         : null,
     ),
-    h('div', { class: 'grid grid-3' },
-      field(t('agents.provider'), h('select', {
-        onchange: (event) => {
-          agent.model.provider = event.target.value;
-          const next = providerOf(event.target.value);
-          agent.model.model = next?.models[0]?.id ?? '';
-          agent.model.reasoningEffort = undefined;
-          scheduleSettingsSave();
-          render();
-        },
-      },
-      option('', '—', !agent.model.provider),
-      state.providers.map((entry) => option(entry.name, entry.displayName ?? entry.name, entry.name === agent.model.provider)),
-      )),
-      field(t('agents.model'), h('select', {
-        onchange: (event) => {
-          agent.model.model = event.target.value;
-          agent.model.reasoningEffort = undefined;
-          scheduleSettingsSave();
-          render();
-        },
-      },
-      option('', '—', !agent.model.model),
-      (provider?.models ?? []).map((model) => option(model.id, model.name ?? model.id, model.id === agent.model.model)),
-      )),
-      field(t('agents.effort'), h('select', {
-        onchange: (event) => {
-          agent.model.reasoningEffort = event.target.value || undefined;
-          scheduleSettingsSave();
-          render();
-        },
-      },
-      effortOptions(agent.model).map((effort) =>
-        option(effort, effort === '' ? t('agents.effortDefault') : effort, (agent.model.reasoningEffort ?? '') === effort)),
-      )),
-    ),
+    h('div', { class: 'grid grid-2' }, engineField),
+    modelRow,
     options.role === 'sub'
       ? field(t('agents.dependsOn'), h('select', {
           multiple: 'multiple',
@@ -612,6 +720,43 @@ function agentEditor(agent, options) {
 
 function validationRow(agent, options) {
   const key = agent.id ?? `anon-${options.index ?? 'main'}`;
+  const engine = engineById(agent.engine ?? 'dsh');
+  const isDsh = !engine || engine.kind === 'dsh';
+
+  if (!isDsh) {
+    // A CLI engine is verified by running it once, which is a real check of
+    // "installed" and "signed in" rather than a static configuration test.
+    const test = state.engineTests.get(engine.id);
+    return h('div', { class: 'validate-row' },
+      h('button', {
+        class: 'ghost small',
+        onclick: async (event) => {
+          const button = event.currentTarget;
+          button.disabled = true;
+          button.textContent = t('engines.testing');
+          try {
+            const response = await api.testEngine(engine.id);
+            state.engineTests.set(engine.id, response.result);
+            await refreshEngines();
+          } catch (error) {
+            state.engineTests.set(engine.id, { ok: false, message: String(error.message ?? error) });
+          }
+          render();
+        },
+      }, `${t('engines.test')} — ${engine.label}`),
+      test
+        ? h('span', { class: `pill ${test.ok ? 'pill-ok' : 'pill-bad'}` },
+            test.ok
+              ? t('engines.testOk', { message: test.message })
+              : t('engines.testFailed', { message: test.message }))
+        : h('span', { class: `pill pill-avail-${engine.availability}` },
+            t(`engines.availability.${engine.availability}`)),
+      engine.kind === 'ide'
+        ? h('span', { class: 'warnings', text: t('engines.ideNote') })
+        : null,
+    );
+  }
+
   const result = state.validation.get(key);
   return h('div', { class: 'validate-row' },
     h('button', {
@@ -685,9 +830,13 @@ async function startRun() {
     notify(t('run.needsTask'), 'error');
     return;
   }
-  const missing = [state.settings.roster.main, ...state.settings.roster.subs].find(
-    (agent) => !agent.model.provider || !agent.model.model,
-  );
+  const missing = [state.settings.roster.main, ...state.settings.roster.subs]
+    .filter((agent) => (agent.enabled !== false))
+    .find((agent) => {
+      const engine = engineById(agent.engine ?? 'dsh');
+      if (engine && engine.kind !== 'dsh') return false;
+      return !agent.model.provider || !agent.model.model;
+    });
   if (missing) {
     notify(`${t('run.needsModel')} (${missing.name})`, 'error');
     return;
@@ -785,7 +934,9 @@ function agentCard(agent) {
       h('h3', {},
         h('span', { class: 'agent-title', text: agent.name }),
         h('small', { class: 'muted', text: ` · ${t(`stage.${agent.stage}`) || agent.stage}` })),
-      h('span', { class: 'model-chip', text: `${agent.model.provider} / ${agent.model.model}${agent.model.reasoningEffort ? ` @ ${agent.model.reasoningEffort}` : ''}` }),
+      h('span', { class: 'model-chip', text: agent.engine && agent.engine !== 'dsh'
+        ? `${engineById(agent.engine)?.label ?? agent.engine}${agent.cliModel ? ` · ${agent.cliModel}` : ''}`
+        : `${agent.model.provider} / ${agent.model.model}${agent.model.reasoningEffort ? ` @ ${agent.model.reasoningEffort}` : ''}` }),
       meta,
     ),
     h('div', { class: 'agent-card-body' },
@@ -1170,6 +1321,8 @@ function renderSettings(view) {
     ),
   ));
 
+  view.append(renderEngines());
+
   view.append(renderProviders());
 
   const info = state.info;
@@ -1208,6 +1361,358 @@ function renderSettings(view) {
           h('dd', { text: state.stateDir ?? info.stateDir ?? '—' }))
       : null,
   ));
+}
+
+/* ----------------------------------------------------------------- engines */
+
+/** One engine row: status, path, version, and the actions that matter. */
+function engineRow(engine) {
+  const test = state.engineTests.get(engine.id);
+  const draft = state.engineDrafts.get(engine.id);
+  const row = h('details', { class: 'engine', open: Boolean(draft) },
+    h('summary', {},
+      h('strong', { text: engine.label }),
+      h('span', { class: `pill pill-avail-${engine.availability}` }, t(`engines.availability.${engine.availability}`)),
+      h('span', { class: `pill pill-kind-${engine.kind}` }, t(`engines.kind.${engine.kind}`)),
+      engine.version ? h('span', { class: 'muted small', text: `v${engine.version}` }) : null,
+      h('span', { class: 'muted small', text: engine.outputFormat }),
+      h('span', { class: 'muted small', text: usedByLabel(engine.id) }),
+    ),
+    engine.description ? h('p', { class: 'muted small', text: engine.description }) : null,
+    h('dl', { class: 'kv' },
+      h('dt', { text: t('engines.path') }),
+      h('dd', { text: engine.executablePath ?? '—' }),
+      h('dt', { text: t('engines.version') }),
+      h('dd', { text: engine.version ?? '—' }),
+    ),
+    h('p', { class: 'muted small', text: engine.message }),
+    engine.kind === 'ide' ? h('p', { class: 'warnings', text: t('engines.ideNote') }) : null,
+    test
+      ? h('div', { class: `test-result ${test.ok ? 'ok' : 'bad'}` },
+          test.ok
+            ? t('engines.testOk', { message: test.message })
+            : t('engines.testFailed', { message: test.message }))
+      : null,
+    h('div', { class: 'engine-actions' },
+      h('button', {
+        class: 'ghost small',
+        onclick: async (event) => {
+          event.currentTarget.disabled = true;
+          event.currentTarget.textContent = t('engines.testing');
+          try {
+            const response = await api.testEngine(engine.id);
+            state.engineTests.set(engine.id, response.result);
+            await refreshEngines();
+          } catch (error) {
+            state.engineTests.set(engine.id, { ok: false, message: String(error.message ?? error) });
+          }
+          render();
+        },
+      }, t('engines.test')),
+      h('button', {
+        class: 'ghost small',
+        onclick: async () => {
+          const response = await api.detectEngine(engine.id);
+          state.engineTests.set(engine.id, { ok: response.detection.availability === 'ready', message: response.detection.message });
+          await refreshEngines();
+          render();
+        },
+      }, t('engines.scan')),
+      engine.canHandoff
+        ? h('button', {
+            class: 'ghost small',
+            onclick: async () => {
+              try {
+                const response = await api.handoffEngine(engine.id, state.runOptions.cwd || state.settings?.dsh?.runCwd || '');
+                notify(response.message, response.ok ? 'ok' : 'error');
+              } catch (error) {
+                notify(String(error.message ?? error), 'error');
+              }
+            },
+          }, t('engines.handoff'))
+        : null,
+      h('button', {
+        class: 'ghost small',
+        onclick: () => {
+          if (draft) state.engineDrafts.delete(engine.id);
+          else state.engineDrafts.set(engine.id, draftFromEngine(engine));
+          render();
+        },
+      }, t('engines.edit')),
+      h('button', {
+        class: 'ghost small danger-text',
+        onclick: async () => {
+          const response = await api.removeEngine(engine.id);
+          state.settings = response.settings;
+          state.engineDrafts.delete(engine.id);
+          await refreshEngines(true);
+          render();
+        },
+      }, engine.builtin ? t('engines.remove') : t('engines.remove')),
+    ),
+    draft ? engineForm(draft) : null,
+  );
+  return row;
+}
+
+function usedByLabel(engineId) {
+  const agents = [state.settings?.roster?.main, ...(state.settings?.roster?.subs ?? [])].filter(Boolean);
+  const users = agents.filter((agent) => (agent.engine ?? 'dsh') === engineId).map((agent) => agent.name);
+  return users.length === 0 ? '' : `${t('engines.usedBy')}: ${users.join(', ')}`;
+}
+
+function draftFromEngine(engine) {
+  return {
+    id: engine.id,
+    label: engine.label,
+    kind: engine.kind,
+    description: engine.description ?? '',
+    enabled: engine.enabled,
+    commands: (engine.commands ?? []).join('\n'),
+    searchGlobs: (engine.searchGlobs ?? []).join('\n'),
+    versionArgs: '--version',
+    argsTemplate: (engine.argsTemplate ?? []).join('\n'),
+    extraArgs: (engine.extraArgs ?? []).join('\n'),
+    outputFormat: engine.outputFormat,
+    promptViaStdin: engine.promptViaStdin,
+    models: (engine.models ?? []).map((model) => (model.name ? `${model.id}=${model.name}` : model.id)).join('\n'),
+    healthArgsTemplate: (engine.healthArgsTemplate ?? []).join('\n'),
+    healthPrompt: engine.healthPrompt ?? '',
+    handoffArgs: (engine.handoffArgs ?? []).join('\n'),
+  };
+}
+
+function emptyDraft() {
+  return {
+    id: '',
+    label: '',
+    kind: 'cli',
+    description: '',
+    enabled: true,
+    commands: '',
+    searchGlobs: '',
+    versionArgs: '--version',
+    argsTemplate: '-p\n{prompt}\n--output-format\njson',
+    extraArgs: '',
+    outputFormat: 'json-lines',
+    promptViaStdin: false,
+    models: '',
+    healthArgsTemplate: '',
+    healthPrompt: 'Reply with exactly: OK',
+    handoffArgs: '',
+  };
+}
+
+/** Parse `id` or `id=name` lines into the engine's model list. */
+function parseModelLines(text) {
+  return String(text ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .map((line) => {
+      const eq = line.indexOf('=');
+      if (eq === -1) return { id: line };
+      return { id: line.slice(0, eq).trim(), name: line.slice(eq + 1).trim() };
+    });
+}
+
+function engineForm(draft) {
+  const text = (key, label, hint, rows = 2) =>
+    field(label, h('textarea', {
+      rows,
+      value: draft[key],
+      oninput: (event) => {
+        draft[key] = event.target.value;
+      },
+    }), hint);
+
+  return h('div', { class: 'engine-form' },
+    h('div', { class: 'grid grid-3' },
+      field(t('engines.form.id'), h('input', {
+        type: 'text',
+        value: draft.id,
+        disabled: draft.builtin,
+        oninput: (event) => {
+          draft.id = event.target.value;
+        },
+      })),
+      field(t('engines.form.label'), h('input', {
+        type: 'text',
+        value: draft.label,
+        oninput: (event) => {
+          draft.label = event.target.value;
+        },
+      })),
+      field(t('engines.kind'), h('select', {
+        onchange: (event) => {
+          draft.kind = event.target.value;
+        },
+      },
+      option('cli', t('engines.kind.cli'), draft.kind === 'cli'),
+      option('dsh', t('engines.kind.dsh'), draft.kind === 'dsh'),
+      option('ide', t('engines.kind.ide'), draft.kind === 'ide'))),
+    ),
+    field(t('engines.form.description'), h('input', {
+      type: 'text',
+      value: draft.description,
+      oninput: (event) => {
+        draft.description = event.target.value;
+      },
+    })),
+    h('label', { class: 'check small' },
+      h('input', {
+        type: 'checkbox',
+        checked: draft.enabled,
+        onchange: (event) => {
+          draft.enabled = event.target.checked;
+        },
+      }), t('engines.form.enabled')),
+    h('div', { class: 'grid grid-2' },
+      text('commands', t('engines.form.commands'), '', 2),
+      text('searchGlobs', t('engines.form.searchGlobs'), '', 2),
+      text('versionArgs', t('engines.form.versionArgs'), '', 1),
+      field(t('engines.form.outputFormat'), h('select', {
+        onchange: (event) => {
+          draft.outputFormat = event.target.value;
+        },
+      }, ['dsh-json', 'claude-stream-json', 'gemini-stream-json', 'json-lines', 'text']
+        .map((format) => option(format, format, draft.outputFormat === format)))),
+    ),
+    text('argsTemplate', t('engines.form.argsTemplate'), t('engines.form.argsHint'), 4),
+    h('div', { class: 'grid grid-2' },
+      text('extraArgs', t('engines.form.extraArgs'), '', 3),
+      text('models', t('engines.form.models'), '', 3),
+    ),
+    h('label', { class: 'check small' },
+      h('input', {
+        type: 'checkbox',
+        checked: draft.promptViaStdin,
+        onchange: (event) => {
+          draft.promptViaStdin = event.target.checked;
+        },
+      }), t('engines.form.promptViaStdin')),
+    h('div', { class: 'grid grid-2' },
+      text('healthArgsTemplate', t('engines.form.healthArgs'), '', 2),
+      field(t('engines.form.healthPrompt'), h('input', {
+        type: 'text',
+        value: draft.healthPrompt,
+        oninput: (event) => {
+          draft.healthPrompt = event.target.value;
+        },
+      })),
+    ),
+    text('handoffArgs', t('engines.form.handoffArgs'), '', 1),
+    h('div', { class: 'engine-actions' },
+      h('button', {
+        class: 'primary small',
+        onclick: async () => {
+          const payload = {
+            id: draft.id,
+            label: draft.label || draft.id,
+            kind: draft.kind,
+            enabled: draft.enabled,
+            description: draft.description,
+            detect: {
+              commands: draft.commands,
+              searchGlobs: draft.searchGlobs,
+              versionArgs: draft.versionArgs,
+            },
+            run: {
+              argsTemplate: draft.argsTemplate,
+              extraArgs: draft.extraArgs,
+              outputFormat: draft.outputFormat,
+              promptViaStdin: draft.promptViaStdin,
+              models: parseModelLines(draft.models),
+              healthArgsTemplate: draft.healthArgsTemplate,
+              healthPrompt: draft.healthPrompt,
+            },
+            handoff: { argsTemplate: draft.handoffArgs || '{cwd}' },
+          };
+          try {
+            const response = await api.saveEngine(payload);
+            state.settings = response.settings;
+            state.engineDrafts.delete(draft.id);
+            await refreshEngines(true);
+            notify(
+              response.problems?.length
+                ? `${t('engines.saved')} — ${t('engines.problems')}: ${response.problems.map((p) => p.message).join(' ')}`
+                : t('engines.saved'),
+              response.problems?.length ? 'error' : 'ok',
+            );
+          } catch (error) {
+            notify(String(error.message ?? error), 'error');
+          }
+          render();
+        },
+      }, t('engines.save')),
+      h('button', {
+        class: 'ghost small',
+        onclick: () => {
+          state.engineDrafts.delete(draft.id);
+          render();
+        },
+      }, t('common.cancel')),
+    ),
+  );
+}
+
+function renderEngines() {
+  const section = h('section', { class: 'card' },
+    h('div', { class: 'card-head' },
+      h('h2', { text: t('engines.title') }),
+      h('button', {
+        class: 'ghost small',
+        onclick: async (event) => {
+          event.currentTarget.disabled = true;
+          event.currentTarget.textContent = t('engines.scanning');
+          await refreshEngines(true);
+          render();
+        },
+      }, t('engines.scan')),
+      h('button', {
+        class: 'ghost small',
+        onclick: () => {
+          const draft = emptyDraft();
+          state.engineDrafts.set('__new__', draft);
+          render();
+        },
+      }, '＋ ' + t('engines.add')),
+    ),
+    h('p', { class: 'muted small', text: t('engines.subtitle') }),
+  );
+
+  for (const engine of state.engines) section.append(engineRow(engine));
+
+  // A hidden built-in preset must be recoverable, otherwise "Remove" is a
+  // one-way door that only settings.json could undo.
+  if (state.hiddenEngines.length > 0) {
+    section.append(h('details', { class: 'engine' },
+      h('summary', {}, h('strong', { text: `${t('engines.hidden')} (${state.hiddenEngines.length})` })),
+      h('ul', { class: 'model-list' }, state.hiddenEngines.map((entry) =>
+        h('li', {},
+          h('strong', { text: entry.label }),
+          h('code', { class: 'small', text: entry.id }),
+          h('button', {
+            class: 'ghost small',
+            onclick: async () => {
+              const response = await api.restoreEngine(entry.id);
+              state.settings = response.settings;
+              state.hiddenEngines = response.hidden ?? [];
+              await refreshEngines(true);
+              render();
+            },
+          }, t('engines.restore'))))),
+    ));
+  }
+
+  const newDraft = state.engineDrafts.get('__new__');
+  if (newDraft) {
+    section.append(h('details', { class: 'engine', open: true },
+      h('summary', {}, h('strong', { text: t('engines.new') })),
+      engineForm(newDraft),
+    ));
+  }
+  return section;
 }
 
 function renderProviders() {

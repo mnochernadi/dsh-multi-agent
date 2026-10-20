@@ -4,6 +4,10 @@ import { runsDir } from '../config/paths.ts';
 import { buildRunPatch, writeRunPatch } from '../dsh/patch.ts';
 import { startAgentRun, type AgentRunHandle, type AgentRunOutcome } from '../dsh/runner.ts';
 import type { Launcher } from '../dsh/launcher.ts';
+import { startCliAgentRun } from '../engines/cli.ts';
+import { detectEngine } from '../engines/detect.ts';
+import { DSH_ENGINE_ID } from '../engines/presets.ts';
+import { findEngine, resolveEngines } from '../engines/registry.ts';
 import { createLogger, type Logger } from '../util/log.ts';
 import { newId } from '../util/ids.ts';
 import { isSkipped, manualPlan, resolvePlan } from './plan.ts';
@@ -16,9 +20,9 @@ import {
 import type {
   AgentRunState,
   AgentSpec,
+  AgentStreamEvent,
   DashboardEvent,
   DashboardSettings,
-  DshStreamEvent,
   PlanResult,
   RunRecord,
   RunRequest,
@@ -48,10 +52,10 @@ interface RunContext {
  * Drives multi-agent work on top of real `dsh` processes.
  *
  * Two modes:
- *  - `pipeline` — the dashboard owns the orchestration: the main agent plans,
+ *  - `pipeline` â€” the dashboard owns the orchestration: the main agent plans,
  *    each sub-agent runs as its own `dsh` process with its own model, then the
  *    main agent synthesises. Per-agent model choice is exact.
- *  - `native` — one `dsh` process whose agent delegates through DSH's own
+ *  - `native` â€” one `dsh` process whose agent delegates through DSH's own
  *    sub-agent tools. Children share the root model, but the orchestration
  *    decisions are the model's.
  */
@@ -235,6 +239,15 @@ export class Orchestrator {
     let plan: PlanResult;
     if (record.options.planning === 'manual' || subSpecs.length === 0) {
       plan = manualPlan(subSpecs);
+      // The lead is never asked to plan here, so the stage must not sit in the
+      // timeline pretending it is still pending.
+      mainState.status = 'skipped';
+      mainState.output =
+        subSpecs.length === 0
+          ? 'No sub-agents are configured, so there was nothing to plan.'
+          : 'Manual planning: each agent ran from its own brief.';
+      mainState.finishedAt = Date.now();
+      this.emit(record.id, 'agent_finished', { agentId: mainState.id, status: 'skipped' });
     } else {
       const outcome = await this.runAgent(context, mainState, {
         stage: 'plan',
@@ -426,78 +439,117 @@ export class Orchestrator {
       state.status = 'aborted';
       return null;
     }
-    const { record, settings, launcher } = context;
+const { record, settings, launcher } = context;
     state.status = 'running';
     state.startedAt = Date.now();
     state.task = options.prompt;
 
-    const built = buildRunPatch({
-      model: state.model,
-      catalogue: settings.providers,
-      trustStoredCredentials: settings.dsh.trustStoredCredentials,
-      ...(state.personaPrefix ? { personaPrefix: state.personaPrefix } : {}),
-    });
-    if (built.warnings.length > 0) {
-      this.emit(record.id, 'log', { agentId: state.id, message: built.warnings.join(' ') });
+    /* Which engine runs this agent? `dsh` unless the operator chose another. */
+    const engines = resolveEngines(settings.engines);
+    const requested = state.engine ?? DSH_ENGINE_ID;
+    const engine = findEngine(engines, requested) ?? findEngine(engines, DSH_ENGINE_ID);
+    if (!engine) {
+      return this.failAgent(context, state, `Engine "${requested}" is not defined in settings.`);
     }
-    if (built.problems.length > 0) {
-      state.status = 'failed';
-      state.error = built.problems.join(' ');
-      state.finishedAt = Date.now();
-      this.emit(record.id, 'agent_finished', {
+    if (!engine.enabled) {
+      return this.failAgent(context, state, `Engine "${engine.label}" is disabled in settings.`);
+    }
+    if (engine.kind === 'ide') {
+      return this.failAgent(
+        context,
+        state,
+        `${engine.label} is an IDE, not a headless agent. Detect it for the workspace handoff, or pick a command-line engine for this agent.`,
+      );
+    }
+    state.engine = engine.id;
+
+    let handle: AgentRunHandle;
+
+    if (engine.kind === 'dsh') {
+      const built = buildRunPatch({
+        model: state.model,
+        catalogue: settings.providers,
+        trustStoredCredentials: settings.dsh.trustStoredCredentials,
+        ...(state.personaPrefix ? { personaPrefix: state.personaPrefix } : {}),
+      });
+      if (built.warnings.length > 0) {
+        this.emit(record.id, 'log', { agentId: state.id, message: built.warnings.join(' ') });
+      }
+      if (built.problems.length > 0) {
+        return this.failAgent(context, state, built.problems.join(' '));
+      }
+
+      const patchPath = writeRunPatch(record.id, `${state.id}.${options.stage}`, built.yaml);
+      state.patchPath = patchPath;
+      state.model = built.resolved;
+      this.emit(record.id, 'agent_started', {
         agentId: state.id,
-        status: 'failed',
-        error: state.error,
+        name: state.name,
+        stage: options.stage,
+        engine: engine.id,
+        engineLabel: engine.label,
+        model: state.model,
+        patchPath,
       });
       this.persist(record);
-      return {
-        ok: false,
-        exitCode: null,
-        finalText: '',
-        messages: [],
-        thinking: [],
-        sessionId: null,
-        turnEndReason: null,
-        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-        error: state.error,
-        stderr: '',
-        aborted: false,
-        timedOut: false,
-        durationMs: 0,
-      };
+
+      handle = startAgentRun({
+        launcher,
+        patchPath,
+        task: options.prompt,
+        cwd: record.cwd,
+        timeoutMs: record.options.timeoutMs,
+        profile: settings.dsh.profile,
+        ...(options.continueSession ? { extraArgs: ['--session-id', options.continueSession] } : {}),
+        onEvent: (event) => {
+          applyStreamEvent(state, event);
+          this.emit(record.id, 'agent_event', { agentId: state.id, stage: options.stage, event });
+        },
+        onStderr: (chunk) => {
+          this.emit(record.id, 'agent_stderr', { agentId: state.id, chunk });
+        },
+        onDiagnostic: (line) => {
+          this.emit(record.id, 'log', { agentId: state.id, message: line });
+        },
+      });
+    } else {
+      const detection = await detectEngine(engine, { dshBin: settings.dsh.bin });
+      if (!detection.executablePath || !detection.launch) {
+        return this.failAgent(context, state, detection.message);
+      }
+      this.emit(record.id, 'agent_started', {
+        agentId: state.id,
+        name: state.name,
+        stage: options.stage,
+        engine: engine.id,
+        engineLabel: engine.label,
+        cliModel: state.cliModel ?? '',
+        executablePath: detection.executablePath,
+        version: detection.version,
+      });
+      this.persist(record);
+
+      handle = startCliAgentRun({
+        engine,
+        detection,
+        prompt: options.prompt,
+        model: state.cliModel ?? '',
+        cwd: record.cwd,
+        timeoutMs: record.options.timeoutMs,
+        ...(options.continueSession ? { sessionId: options.continueSession } : {}),
+        onEvent: (event) => {
+          applyStreamEvent(state, event);
+          this.emit(record.id, 'agent_event', { agentId: state.id, stage: options.stage, event });
+        },
+        onStderr: (chunk) => {
+          this.emit(record.id, 'agent_stderr', { agentId: state.id, chunk });
+        },
+        onDiagnostic: (line) => {
+          this.emit(record.id, 'log', { agentId: state.id, message: line });
+        },
+      });
     }
 
-    const patchPath = writeRunPatch(record.id, `${state.id}.${options.stage}`, built.yaml);
-    state.patchPath = patchPath;
-    state.model = built.resolved;
-    this.emit(record.id, 'agent_started', {
-      agentId: state.id,
-      name: state.name,
-      stage: options.stage,
-      model: state.model,
-      patchPath,
-    });
-    this.persist(record);
-
-    const handle = startAgentRun({
-      launcher,
-      patchPath,
-      task: options.prompt,
-      cwd: record.cwd,
-      timeoutMs: record.options.timeoutMs,
-      profile: settings.dsh.profile,
-      ...(options.continueSession ? { extraArgs: ['--session-id', options.continueSession] } : {}),
-      onEvent: (event) => {
-        applyStreamEvent(state, event);
-        this.emit(record.id, 'agent_event', { agentId: state.id, stage: options.stage, event });
-      },
-      onStderr: (chunk) => {
-        this.emit(record.id, 'agent_stderr', { agentId: state.id, chunk });
-      },
-      onDiagnostic: (line) => {
-        this.emit(record.id, 'log', { agentId: state.id, message: line });
-      },
-    });
     context.handles.set(`${state.id}:${options.stage}`, handle);
 
     const outcome = await handle.done;
@@ -533,6 +585,38 @@ export class Orchestrator {
 
   /* ------------------------------------------------------------------ helpers */
 
+  /**
+   * Record an agent that could not start at all — an unconfigured model, a
+   * missing engine, a disabled one — without spawning anything.
+   */
+  private failAgent(context: RunContext, state: AgentRunState, message: string): AgentRunOutcome {
+    state.status = 'failed';
+    state.error = message;
+    state.finishedAt = Date.now();
+    this.emit(context.record.id, 'agent_finished', {
+      agentId: state.id,
+      status: 'failed',
+      error: message,
+    });
+    this.logger.warn(`agent ${state.id} could not start`, { runId: context.record.id, message });
+    this.persist(context.record);
+    return {
+      ok: false,
+      exitCode: null,
+      finalText: '',
+      messages: [],
+      thinking: [],
+      sessionId: null,
+      turnEndReason: null,
+      usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      error: message,
+      stderr: '',
+      aborted: false,
+      timedOut: false,
+      durationMs: 0,
+    };
+  }
+
   private emit(runId: string, type: DashboardEvent['type'], data: Record<string, unknown>): void {
     this.deps.emit({ runId, type, ts: Date.now(), data });
   }
@@ -560,6 +644,8 @@ function makeAgentState(spec: AgentSpec, stage: string, task: string): AgentRunS
     name: spec.name,
     role: stage === 'work' ? 'sub' : 'main',
     stage,
+    ...(spec.engine !== undefined ? { engine: spec.engine } : {}),
+    ...(spec.cliModel !== undefined ? { cliModel: spec.cliModel } : {}),
     model: spec.model,
     status: 'pending',
     task,
@@ -598,8 +684,8 @@ function finalAgentState(record: RunRecord): AgentRunState | undefined {
   );
 }
 
-/** Apply one projected DSH event to an agent's live state. */
-function applyStreamEvent(state: AgentRunState, event: DshStreamEvent): void {
+/** Apply one projected agent event to an agent's live state. */
+function applyStreamEvent(state: AgentRunState, event: AgentStreamEvent): void {
   switch (event.type) {
     case 'session':
       if (typeof event.sessionId === 'string') state.sessionId = event.sessionId;

@@ -827,6 +827,111 @@ dl.kv dd {
   word-break: break-all;
 }
 
+/* ----------------------------------------------------------------- engines */
+
+.pill-avail-ready {
+  color: color-mix(in srgb, var(--ok) 90%, var(--text));
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.pill-avail-installed {
+  color: color-mix(in srgb, var(--warn) 90%, var(--text));
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.pill-avail-missing,
+.pill-avail-broken {
+  color: color-mix(in srgb, var(--bad) 85%, var(--text));
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+}
+
+.pill-avail-disabled {
+  color: var(--text-faint);
+}
+
+.pill-kind-dsh {
+  color: color-mix(in srgb, var(--accent) 90%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.pill-kind-cli {
+  color: color-mix(in srgb, var(--accent-2) 90%, var(--text));
+  border-color: color-mix(in srgb, var(--accent-2) 40%, transparent);
+}
+
+.pill-kind-ide {
+  color: var(--text-faint);
+}
+
+.engine {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-block-start: 10px;
+  background: var(--bg-soft);
+}
+
+.engine > summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  user-select: none;
+}
+
+.engine-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block-start: 10px;
+}
+
+.engine-form {
+  margin-block-start: 12px;
+  border-block-start: 1px solid var(--border-soft);
+  padding-block-start: 10px;
+}
+
+.engine-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-self: end;
+}
+
+.engine-note code {
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.test-result {
+  margin-block-start: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  white-space: pre-wrap;
+}
+
+.test-result.ok {
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  color: color-mix(in srgb, var(--ok) 85%, var(--text));
+}
+
+.test-result.bad {
+  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+  color: color-mix(in srgb, var(--bad) 88%, var(--text));
+}
+
 /* ----------------------------------------------------------------- events */
 
 .event-log {

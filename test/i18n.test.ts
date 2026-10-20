@@ -44,6 +44,13 @@ test('i18n: dynamic key families used by the frontend are complete', () => {
     ['result.planSource.', ['main-agent', 'manual']],
     ['run.mode.', ['pipeline', 'native']],
     ['run.planning.', ['auto', 'manual']],
+    ['engines.availability.', ['ready', 'installed', 'missing', 'disabled', 'broken']],
+    ['engines.kind.', ['dsh', 'cli', 'ide']],
+    ['engines.form.', [
+      'id', 'label', 'description', 'enabled', 'commands', 'searchGlobs', 'versionArgs',
+      'argsTemplate', 'argsHint', 'extraArgs', 'outputFormat', 'promptViaStdin', 'models',
+      'healthArgs', 'healthPrompt', 'handoffArgs',
+    ]],
   ];
   for (const [prefix, suffixes] of families) {
     for (const suffix of suffixes as string[]) {

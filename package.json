@@ -1,7 +1,7 @@
 {
   "name": "dsh-multi-agent",
-  "version": "0.1.0",
-  "description": "Multi-agent orchestration dashboard for DeepSeek Harness: choose a provider/model per agent, run dashboard pipelines or native subagent teams, and watch every event live.",
+  "version": "0.2.0",
+  "description": "Multi-agent orchestration dashboard for DeepSeek Harness and any headless agent CLI: pick an engine, provider and model per agent, run dashboard pipelines or native subagent teams, and watch every event live.",
   "type": "module",
   "license": "MIT",
   "author": "mnochernadi",
@@ -20,7 +20,9 @@
     "orchestration",
     "dashboard",
     "llm",
-    "subagent"
+    "subagent",
+    "claude-code",
+    "agent-cli"
   ],
   "engines": {
     "node": ">=22.18.0"

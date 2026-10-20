@@ -5,6 +5,7 @@ import path from 'node:path';
 import { envValue } from '../util/env.ts';
 import { resolveDshHome } from '../config/paths.ts';
 import { createLogger } from '../util/log.ts';
+import { looksLikePath, parseCommandWrapper } from '../util/winwrap.ts';
 
 const log = createLogger('dsh:launcher');
 
@@ -89,47 +90,13 @@ function pathCandidates(): string[] {
   return out;
 }
 
-/**
- * Split a Windows command line into tokens, honouring double quotes.
- *
- * The shipped wrapper mixes quoted paths with bare flags
- * (`"…\App.exe" --expose-internals "…\cli.js" %*`), so quote-only extraction
- * would silently drop the flags.
- */
-function tokenizeCommandLine(line: string): string[] {
-  const tokens: string[] = [];
-  let current = '';
-  let quoted = false;
-  let started = false;
-  for (const ch of line) {
-    if (ch === '"') {
-      quoted = !quoted;
-      started = true;
-      continue;
-    }
-    if (!quoted && /\s/.test(ch)) {
-      if (started) tokens.push(current);
-      current = '';
-      started = false;
-      continue;
-    }
-    current += ch;
-    started = true;
-  }
-  if (started) tokens.push(current);
-  return tokens.filter((token) => token !== '' && token !== '%*');
-}
-
-function looksLikePath(token: string): boolean {
-  return /[\\/]/.test(token) || /\.(exe|cmd|bat|js|mjs|cjs)$/i.test(token);
-}
 
 /**
  * Turn a launcher file into an exact command line.
  *
  * The shipped `dsh.cmd` is a two-line wrapper around
  * `<app>.exe --expose-internals <app.asar>/dsh/.../cli.js`, so we read it and
- * spawn the executable directly. That avoids a shell entirely — which matters
+ * spawn the executable directly. That avoids a shell entirely â€” which matters
  * because run patches live under paths that routinely contain spaces.
  */
 export function buildLauncherFromFile(launcherPath: string, source: string): Launcher | null {
@@ -138,36 +105,23 @@ export function buildLauncherFromFile(launcherPath: string, source: string): Lau
   const ext = path.extname(resolved).toLowerCase();
 
   if (ext === '.cmd' || ext === '.bat') {
-    let text: string;
-    try {
-      text = readFileSync(resolved, 'utf8');
-    } catch (error) {
-      log.warn(`cannot read launcher ${resolved}`, { error: String(error) });
+    const wrapper = parseCommandWrapper(resolved);
+    if (!wrapper || wrapper.shell) {
+      log.warn(`cannot take apart the launcher wrapper ${resolved}`);
       return null;
     }
-    const dir = path.dirname(resolved);
-    const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1' };
-    for (const match of text.matchAll(/set\s+"([A-Za-z_][A-Za-z0-9_]*)=(.*?)"\s*$/gim)) {
-      env[match[1]!] = match[2]!;
-    }
-    const commandLine = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find((line) => line.includes('%*') && !line.toLowerCase().startsWith('rem'));
-    if (!commandLine) return null;
-
-    const expanded = commandLine.replace(/%~dp0/gi, `${dir}${path.sep}`);
-    const tokens = tokenizeCommandLine(expanded);
-    if (tokens.length === 0) return null;
-
-    const [commandRaw, ...rest] = tokens;
-    const command = looksLikePath(commandRaw!) ? path.resolve(commandRaw!) : commandRaw!;
-    const argsPrefix = rest.map((token) => (looksLikePath(token) ? path.resolve(dir, token) : token));
-    if (!existsSync(command)) {
-      log.warn(`launcher ${resolved} points at a missing executable`, { command });
+    if (looksLikePath(wrapper.command) && !existsSync(wrapper.command)) {
+      log.warn(`launcher ${resolved} points at a missing executable`, { command: wrapper.command });
       return null;
     }
-    return { kind: 'electron-asar', command, argsPrefix, env, source, launcherPath: resolved };
+    return {
+      kind: 'electron-asar',
+      command: wrapper.command,
+      argsPrefix: wrapper.argsPrefix,
+      env: { ELECTRON_RUN_AS_NODE: '1', ...wrapper.env },
+      source,
+      launcherPath: resolved,
+    };
   }
 
   if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {

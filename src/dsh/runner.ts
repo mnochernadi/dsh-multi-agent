@@ -1,8 +1,10 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import { launcherArgs, ensureCwd, runLauncher, type Launcher } from './launcher.ts';
-import type { DshStreamEvent, UsageTotals } from '../types.ts';
+import { runProcess } from '../util/process.ts';
+import { dshParser } from '../engines/parsers.ts';
+import { emptyParserState } from '../engines/types.ts';
+import type { AgentRunOutcome, AgentStreamEvent } from '../types.ts';
 
-const MAX_STDERR_BYTES = 256 * 1024;
+export type { AgentRunOutcome } from '../types.ts';
 
 export interface AgentRunOptions {
   launcher: Launcher;
@@ -17,25 +19,9 @@ export interface AgentRunOptions {
   /** Extra launcher/app arguments inserted before the task marker. */
   extraArgs?: string[];
   env?: Record<string, string>;
-  onEvent?: (event: DshStreamEvent) => void;
+  onEvent?: (event: AgentStreamEvent) => void;
   onStderr?: (chunk: string) => void;
   onDiagnostic?: (line: string) => void;
-}
-
-export interface AgentRunOutcome {
-  ok: boolean;
-  exitCode: number | null;
-  finalText: string;
-  messages: string[];
-  thinking: string[];
-  sessionId: string | null;
-  turnEndReason: unknown;
-  usage: UsageTotals;
-  error: string | null;
-  stderr: string;
-  aborted: boolean;
-  timedOut: boolean;
-  durationMs: number;
 }
 
 export interface AgentRunHandle {
@@ -44,22 +30,12 @@ export interface AgentRunHandle {
   readonly done: Promise<AgentRunOutcome>;
 }
 
-function emptyUsage(): UsageTotals {
-  return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-}
-
-function addUsage(target: UsageTotals, add: UsageTotals | undefined): void {
-  if (!add) return;
-  target.inputTokens += Number(add.inputTokens) || 0;
-  target.outputTokens += Number(add.outputTokens) || 0;
-  target.totalTokens += Number(add.totalTokens) || 0;
-}
-
 /**
  * Start one agent as a real `dsh --profile headless --json` process.
  *
  * The task travels over stdin, so prompt text never has to survive command-line
- * quoting. Everything the run reports arrives as newline-delimited JSON events.
+ * quoting. Output is newline-delimited JSON, decoded by the shared DSH parser —
+ * the same event vocabulary every other engine maps into.
  */
 export function startAgentRun(options: AgentRunOptions): AgentRunHandle {
   const profile = options.profile ?? 'headless';
@@ -75,181 +51,68 @@ export function startAgentRun(options: AgentRunOptions): AgentRunHandle {
     '-',
   ]);
 
-  const child: ChildProcess = spawn(options.launcher.command, args, {
+  const state = emptyParserState();
+
+  const handle = runProcess({
+    command: options.launcher.command,
+    args,
     cwd: ensureCwd(options.cwd),
     env: { ...process.env, ...options.launcher.env, ...(options.env ?? {}) },
-    windowsHide: true,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-
-  const startedAt = Date.now();
-  const messages: string[] = [];
-  const thinking: string[] = [];
-  const usage = emptyUsage();
-  let sessionId: string | null = null;
-  let finalText = '';
-  let turnEndReason: unknown = null;
-  let errorText: string | null = null;
-  let stderr = '';
-  let stdoutBuffer = '';
-  let aborted = false;
-  let timedOut = false;
-  let settled = false;
-
-  const killTree = (): void => {
-    const pid = child.pid;
-    if (pid === undefined) return;
-    if (process.platform === 'win32') {
-      // The Electron-based launcher can have children; kill the whole tree.
-      try {
-        spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      } catch {
-        child.kill();
+    timeoutMs: options.timeoutMs,
+    onStdoutLine: (line) => {
+      const parsed = dshParser.parse(line, state);
+      if (parsed.events) {
+        for (const event of parsed.events) options.onEvent?.(event);
+      } else if (parsed.event) {
+        options.onEvent?.(parsed.event);
+      } else if (parsed.raw) {
+        options.onDiagnostic?.(parsed.raw);
       }
-    } else {
-      child.kill('SIGTERM');
-      setTimeout(() => {
-        if (!settled) child.kill('SIGKILL');
-      }, 5000).unref?.();
-    }
-  };
-
-  const timer =
-    options.timeoutMs > 0
-      ? setTimeout(() => {
-          timedOut = true;
-          killTree();
-        }, options.timeoutMs)
-      : null;
-
-  const handleLine = (line: string): void => {
-    const text = line.trim();
-    if (text === '') return;
-    let parsed: DshStreamEvent;
-    try {
-      parsed = JSON.parse(text) as DshStreamEvent;
-    } catch {
-      options.onDiagnostic?.(text);
-      return;
-    }
-    switch (parsed.type) {
-      case 'session':
-        sessionId = parsed.sessionId;
-        break;
-      case 'text':
-        if (parsed.text.trim() !== '') messages.push(parsed.text);
-        break;
-      case 'thinking':
-        if (parsed.text.trim() !== '') thinking.push(parsed.text);
-        break;
-      case 'status':
-        if (parsed.phase === 'step_end') addUsage(usage, parsed.usage);
-        if (parsed.phase === 'turn_end') turnEndReason = parsed.reason ?? null;
-        break;
-      case 'final':
-        finalText = parsed.text;
-        break;
-      case 'error':
-        errorText = parsed.code ? `${parsed.code}: ${parsed.message}` : parsed.message;
-        break;
-      default:
-        break;
-    }
-    options.onEvent?.(parsed);
-  };
-
-  child.stdout?.setEncoding('utf8');
-  child.stdout?.on('data', (chunk: string) => {
-    stdoutBuffer += chunk;
-    let index = stdoutBuffer.indexOf('\n');
-    while (index !== -1) {
-      handleLine(stdoutBuffer.slice(0, index));
-      stdoutBuffer = stdoutBuffer.slice(index + 1);
-      index = stdoutBuffer.indexOf('\n');
-    }
-  });
-
-  child.stderr?.setEncoding('utf8');
-  child.stderr?.on('data', (chunk: string) => {
-    if (stderr.length < MAX_STDERR_BYTES) stderr += chunk;
-    options.onStderr?.(chunk);
-  });
-
-  if (child.stdin) {
-    child.stdin.on('error', () => {
-      /* the runner may exit before reading stdin; not fatal */
-    });
-    child.stdin.end(options.task, 'utf8');
-  }
-
-  const done = new Promise<AgentRunOutcome>((resolve) => {
-    const finish = (exitCode: number | null): void => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (stdoutBuffer.trim() !== '') handleLine(stdoutBuffer);
-      const reason = turnEndReason as
-        | { kind?: string; error?: { message?: string; code?: string } }
-        | null;
-      const reasonKind = reason && typeof reason === 'object' ? reason.kind : undefined;
-
-      // A provider failure carries the real cause in `turn_end.reason.error`;
-      // prefer it over the generic "turn ended with reason error".
-      if (!errorText && reason?.error?.message) {
-        errorText = reason.error.code
-          ? `${reason.error.code}: ${reason.error.message}`
-          : reason.error.message;
-      }
-      if (!errorText && stderr.trim() !== '') {
-        const diagnostic = stderr
-          .split(/\r?\n/)
-          .map((line) => line.trim())
-          .filter((line) => line.startsWith('dsh:'))
-          .pop();
-        if (diagnostic) errorText = diagnostic.replace(/^dsh:\s*/, '');
-      }
-
-      const ok = !aborted && !timedOut && exitCode === 0 && reasonKind !== 'error';
-      const derivedError =
-        errorText ??
-        (ok
-          ? null
-          : reasonKind && reasonKind !== 'completed'
-            ? `turn ended with reason "${reasonKind}"`
-            : `dsh exited with code ${exitCode ?? 'null'}`);
-      resolve({
-        ok,
-        exitCode,
-        finalText: finalText !== '' ? finalText : messages.join('\n\n'),
-        messages,
-        thinking,
-        sessionId,
-        turnEndReason,
-        usage,
-        error: ok ? null : derivedError,
-        stderr: stderr.trim(),
-        aborted,
-        timedOut,
-        durationMs: Date.now() - startedAt,
-      });
-    };
-
-    child.on('error', (error) => {
-      errorText = errorText ?? String(error);
-      finish(null);
-    });
-    child.on('close', (code) => finish(code));
-  });
-
-  return {
-    pid: child.pid ?? null,
-    abort: () => {
-      if (settled) return;
-      aborted = true;
-      killTree();
     },
-    done,
-  };
+    onStderr: (chunk) => options.onStderr?.(chunk),
+  });
+
+  handle.sendStdin(options.task);
+
+  const done = handle.done.then((outcome): AgentRunOutcome => {
+    for (const event of dshParser.finish?.(state) ?? []) options.onEvent?.(event);
+
+    // Prefer the specific cause: a provider failure carries it in
+    // `turn_end.reason.error`, and the runner repeats it on stderr as `dsh: …`.
+    let error = state.error;
+    if (!error) {
+      const diagnostic = outcome.stderr
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('dsh:'))
+        .pop();
+      if (diagnostic) error = diagnostic.replace(/^dsh:\s*/, '');
+    }
+    if (!error && !outcome.aborted && !outcome.timedOut && outcome.exitCode !== 0) {
+      error = `dsh exited with code ${outcome.exitCode ?? 'null'}`;
+    }
+
+    const finalText = state.finalText !== '' ? state.finalText : state.messages.join('\n\n');
+    const ok = error === null && !outcome.aborted && !outcome.timedOut && outcome.exitCode === 0;
+
+    return {
+      ok,
+      exitCode: outcome.exitCode,
+      finalText,
+      messages: state.messages,
+      thinking: state.thinking,
+      sessionId: state.sessionId,
+      turnEndReason: state.failed ? { kind: 'error' } : { kind: 'completed' },
+      usage: state.usage,
+      error: ok ? null : (error ?? 'the run failed'),
+      stderr: outcome.stderr,
+      aborted: outcome.aborted,
+      timedOut: outcome.timedOut,
+      durationMs: outcome.durationMs,
+    };
+  });
+
+  return { abort: handle.abort, pid: handle.pid, done };
 }
 
 /**

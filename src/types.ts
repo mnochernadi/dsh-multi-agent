@@ -46,6 +46,13 @@ export interface AgentSpec {
   name: string;
   role: AgentRole;
   model: ModelChoice;
+  /**
+   * Which engine runs this agent. `dsh` (DeepSeek Harness) is the default;
+   * any other id names a CLI engine such as `claude-code`.
+   */
+  engine?: string;
+  /** Model id for CLI engines, e.g. a Claude Code alias such as `sonnet`. */
+  cliModel?: string;
   /** Role text injected into the prompt for this agent. */
   instructions?: string;
   /** Optional `system-prompt.personaPrefix` override for this agent's run. */
@@ -100,6 +107,10 @@ export interface AgentRunState {
   name: string;
   role: AgentRole;
   stage: string;
+  /** Engine that ran (or is running) this agent. */
+  engine?: string;
+  /** Model id used by a CLI engine. */
+  cliModel?: string;
   model: ModelChoice;
   status: AgentStatus;
   task: string;
@@ -217,7 +228,15 @@ export interface DshErrorEvent {
   code?: string;
 }
 
-export type DshStreamEvent =
+/**
+ * The dashboard's normalized agent-event vocabulary.
+ *
+ * Every engine maps its own output into exactly these events, so the timeline,
+ * the run record, and the browser never need to know which program produced
+ * them. Event *names* keep the `Dsh*` prefix because that is where they were
+ * first defined; `AgentStreamEvent` is the name to use in new code.
+ */
+export type AgentStreamEvent =
   | DshSessionEvent
   | DshStatusEvent
   | DshTextEvent
@@ -226,6 +245,26 @@ export type DshStreamEvent =
   | DshToolResultEvent
   | DshFinalEvent
   | DshErrorEvent;
+
+/** @deprecated Use {@link AgentStreamEvent}. */
+export type DshStreamEvent = AgentStreamEvent;
+
+/** Uniform result of running one agent, whichever engine ran it. */
+export interface AgentRunOutcome {
+  ok: boolean;
+  exitCode: number | null;
+  finalText: string;
+  messages: string[];
+  thinking: string[];
+  sessionId: string | null;
+  turnEndReason: unknown;
+  usage: UsageTotals;
+  error: string | null;
+  stderr: string;
+  aborted: boolean;
+  timedOut: boolean;
+  durationMs: number;
+}
 
 /* ------------------------------------------------- dashboard event stream */
 
@@ -278,6 +317,13 @@ export interface DashboardSettings {
     direction: 'rtl' | 'ltr';
   };
   providers: ProviderCatalogue;
+  /**
+   * Engine overrides keyed by engine id, plus fully custom engines.
+   *
+   * Built-in presets are implicit, so this stays empty for a user who never
+   * edits an engine — and later preset improvements reach them automatically.
+   */
+  engines: Record<string, unknown>;
   /** Last used agent roster, restored in the UI. */
   roster: {
     main: AgentSpec;

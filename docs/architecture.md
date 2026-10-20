@@ -1,6 +1,50 @@
 # Technical Architecture
 
-This document describes the design decisions, process lifecycle, and integration points between `dsh-multi-agent` and DeepSeek Harness (DSH).
+This document describes the design decisions, process lifecycle, and integration points between `dsh-multi-agent` and the agent programs it drives.
+
+---
+
+## 0. The engine layer
+
+The dashboard is built around one abstraction: an **engine** is any program that can run a single agent to completion. DeepSeek Harness is the built-in engine, not a special case.
+
+```
+orchestrator/engine.ts
+   └── resolves AgentSpec.engine → EngineDefinition (engines/registry.ts)
+          ├── kind 'dsh'  → dsh/patch.ts (Cordis overlay) + dsh/runner.ts
+          ├── kind 'cli'  → engines/cli.ts  (template → spawn → parse)
+          └── kind 'ide'  → refused for agent runs; engines/detect.ts handoff only
+```
+
+Everything downstream — the run record, the SSE timeline, the browser — consumes one normalized event vocabulary (`AgentStreamEvent`), so a sub-agent that ran as Claude Code is indistinguishable from one that ran as DSH except for the label it reports.
+
+### Why a descriptor, not a plugin class per CLI
+
+An `EngineDefinition` is data: detection commands, an argument template, an output format, and a model list. That is what makes every engine editable from the UI without shipping code, and what makes "add my own program" a form instead of a filesystem plugin.
+
+### Output formats
+
+| Format | Produced by | Notes |
+|---|---|---|
+| `dsh-json` | `dsh --profile headless --json` | Usage arrives per committed step, so it accumulates |
+| `claude-stream-json` | `claude -p --output-format stream-json --verbose` | `system/init`, `assistant`, `user` (tool results), `result`; usage is session-cumulative on `result`, so per-message usage is deliberately **not** summed |
+| `gemini-stream-json` | Gemini CLI and its forks | Tolerant: reads `response`/`text`/`content`/`output` |
+| `json-lines` | anything else emitting JSON | Heuristic field matching; always falls back to showing raw text |
+| `text` | plain-text CLIs | The whole transcript becomes the answer |
+
+No parser throws on unknown input: an unrecognized line becomes a `raw` diagnostic, because losing a progressing run to an unexpected field is worse than showing a stray line.
+
+### Exit and failure semantics
+
+A run is `ok` only when the process exited 0 **and** the stream reported no failure **and** an answer exists. The engine's own error text is preferred over a generic message — Claude Code that is installed but not signed in yields `Not logged in · Please run /login` from its `result` event, which is exactly what the operator needs to read.
+
+### Detection states
+
+`missing` → `installed` → `ready`. Detection finds an executable (PATH first, then machine-expanded search globs, newest version first) and probes `--version`. `ready` is claimed only after a real health check returns an answer. A CLI that exists but cannot authenticate stays `installed` with the reason attached.
+
+### Launch safety
+
+Windows wrappers are read and rewritten rather than shelled out to: `util/winwrap.ts` parses a `.cmd`/`.bat` shim into its real command line (`node <script>`, or a bundled `.exe`), so prompts and paths containing spaces never have to survive shell quoting. `.ps1` runs through the PowerShell host, `.js` through `node`, and a shell is the last resort for an unparseable wrapper.
 
 ---
 
