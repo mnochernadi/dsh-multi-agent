@@ -1470,7 +1470,8 @@ function draftFromEngine(engine) {
     enabled: engine.enabled,
     commands: (engine.commands ?? []).join('\n'),
     searchGlobs: (engine.searchGlobs ?? []).join('\n'),
-    versionArgs: '--version',
+    versionArgs: (engine.versionArgs ?? ['--version']).join('\n'),
+    executablePath: engine.configuredExecutablePath ?? '',
     argsTemplate: (engine.argsTemplate ?? []).join('\n'),
     extraArgs: (engine.extraArgs ?? []).join('\n'),
     outputFormat: engine.outputFormat,
@@ -1492,6 +1493,7 @@ function emptyDraft() {
     commands: '',
     searchGlobs: '',
     versionArgs: '--version',
+    executablePath: '',
     argsTemplate: '-p\n{prompt}\n--output-format\njson',
     extraArgs: '',
     outputFormat: 'json-lines',
@@ -1571,6 +1573,7 @@ function engineForm(draft) {
       text('commands', t('engines.form.commands'), '', 2),
       text('searchGlobs', t('engines.form.searchGlobs'), '', 2),
       text('versionArgs', t('engines.form.versionArgs'), '', 1),
+      text('executablePath', t('engines.form.executablePath'), t('engines.form.executablePathHint'), 1),
       field(t('engines.form.outputFormat'), h('select', {
         onchange: (event) => {
           draft.outputFormat = event.target.value;
@@ -1616,6 +1619,7 @@ function engineForm(draft) {
               commands: draft.commands,
               searchGlobs: draft.searchGlobs,
               versionArgs: draft.versionArgs,
+              executablePath: draft.executablePath,
             },
             run: {
               argsTemplate: draft.argsTemplate,
@@ -1626,7 +1630,12 @@ function engineForm(draft) {
               healthArgsTemplate: draft.healthArgsTemplate,
               healthPrompt: draft.healthPrompt,
             },
-            handoff: { argsTemplate: draft.handoffArgs || '{cwd}' },
+            // A handoff is only meaningful when the user actually gave it
+            // arguments; sending '{cwd}' for every engine would offer
+            // "open folder" on plain command-line engines too.
+            ...(draft.handoffArgs.trim() !== ''
+              ? { handoff: { argsTemplate: draft.handoffArgs } }
+              : {}),
           };
           try {
             const response = await api.saveEngine(payload);

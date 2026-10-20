@@ -31,7 +31,7 @@ export interface AgentRunHandle {
 }
 
 /**
- * Start one agent as a real `dsh --profile headless --json` process.
+ * Start one agent as a real `dsh headless --patch <patch> --json -` process.
  *
  * The task travels over stdin, so prompt text never has to survive command-line
  * quoting. Output is newline-delimited JSON, decoded by the shared DSH parser —

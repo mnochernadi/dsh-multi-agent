@@ -155,6 +155,21 @@ test('parser: unknown JSON lines never throw and are reported as raw', () => {
   assert.equal(broken.event?.type, 'text', 'unparseable text is still shown to the operator');
 });
 
+test('parser: a Claude line this build does not understand is kept as raw', () => {
+  const parser = getParser('claude-stream-json');
+  const state = emptyParserState();
+
+  const partial = '{"type":"stream_event","event":{"delta":"par"}}';
+  const unknownType = parser.parse(partial, state);
+  assert.equal(unknownType.event, null);
+  assert.equal(unknownType.raw, partial, 'an unknown event type is shown instead of vanishing');
+
+  const unknownBlocks = '{"type":"assistant","message":{"content":[{"type":"mystery_block"}]}}';
+  const empty = parser.parse(unknownBlocks, state);
+  assert.equal(empty.event, null);
+  assert.equal(empty.raw, unknownBlocks, 'a message whose blocks are all unknown is still visible');
+});
+
 test('parser: every advertised output format resolves', () => {
   for (const format of OUTPUT_FORMATS) {
     assert.equal(getParser(format).format, format);
@@ -332,4 +347,31 @@ test('registry: a hidden preset is reported so it can be restored', () => {
   const afterRestore = resolveEngines({}).map((engine) => engine.id);
   assert.equal(afterRestore.includes('gemini-cli'), true);
   assert.deepEqual(hiddenPresets({}), []);
+});
+
+test('registry: a pinned executable path survives the round trip', () => {
+  const pinned = normalizeEngine({
+    id: 'pinned',
+    kind: 'cli',
+    detect: { commands: ['agent'], executablePath: '  C:\\tools\\agent.exe  ' },
+    run: { argsTemplate: ['{prompt}'], outputFormat: 'text', promptViaStdin: false },
+  })!;
+  assert.equal(pinned.detect.executablePath, 'C:\\tools\\agent.exe', 'the pin is trimmed and kept');
+
+  // Every save sends only the fields the form knows about, so an override that
+  // omits the pin must not erase the one stored on the preset.
+  const overridden = normalizeEngine(
+    { id: 'pinned', label: 'Pinned again', detect: { commands: ['agent'] } },
+    pinned,
+  )!;
+  assert.equal(overridden.detect.executablePath, 'C:\\tools\\agent.exe');
+  assert.equal(overridden.label, 'Pinned again', 'the rest of the override still applies');
+
+  const unpinned = normalizeEngine({
+    id: 'unpinned',
+    kind: 'cli',
+    detect: { commands: ['x'] },
+    run: { argsTemplate: ['{prompt}'], outputFormat: 'text', promptViaStdin: false },
+  })!;
+  assert.equal(unpinned.detect.executablePath, undefined, 'no pin stays unpinned');
 });

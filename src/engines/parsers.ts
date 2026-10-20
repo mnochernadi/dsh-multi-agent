@@ -49,7 +49,7 @@ function addUsage(target: UsageTotals, input: number, output: number): void {
 /* ------------------------------------------------------------------ DSH */
 
 /**
- * `dsh --profile headless --json`.
+ * `dsh headless --patch <patch> --json -`.
  *
  * Usage arrives per committed step (`status`/`step_end`), so it accumulates.
  */
@@ -216,7 +216,7 @@ export const claudeParser: StreamParser = {
           });
         }
       }
-      if (produced.length === 0) return { event: null };
+      if (produced.length === 0) return { event: null, raw: line };
       return { event: produced[0]!, events: produced };
     }
     if (type === 'result') {
@@ -246,7 +246,7 @@ export const claudeParser: StreamParser = {
       return { event: { type: 'final', text: resultText } };
     }
     // `stream_event` (partial messages) and anything new: keep the text visible.
-    return { event: null };
+    return { event: null, raw: line };
   },
 };
 

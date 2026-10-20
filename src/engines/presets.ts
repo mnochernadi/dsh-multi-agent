@@ -26,7 +26,7 @@ export const builtinEngines: EngineDefinition[] = [
     builtin: true,
     enabled: true,
     description:
-      'Runs one agent as a real `dsh --profile headless` process. Provider, model and reasoning effort are injected through a generated Cordis patch, and credentials come from the DSH store.',
+      'Runs one agent as a real `dsh headless` process. Provider, model and reasoning effort are injected through a generated Cordis patch, and credentials come from the DSH store.',
     homepage: 'https://github.com/deepseek-ai/deepseek-harness',
     detect: { commands: ['dsh'] },
     run: {

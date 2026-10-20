@@ -194,6 +194,9 @@ export const STRINGS = {
     'engines.form.commands': 'نام دستورها روی PATH (هر خط یکی)',
     'engines.form.searchGlobs': 'الگوهای جست‌وجو (هر خط یکی) — مثلاً %LOCALAPPDATA%/.../agent.exe',
     'engines.form.versionArgs': 'آرگومان‌های نسخه (هر خط یکی)',
+    'engines.form.executablePath': 'مسیر دقیق فایل اجرایی (اختیاری)',
+    'engines.form.executablePathHint':
+      'اگر برنامه پیدا نشد یا wrapper خوانده نشد، مسیر مستقیم فایل اجرایی را اینجا بگذارید.',
     'engines.form.argsTemplate': 'قالب آرگومان‌ها (هر خط یکی)',
     'engines.form.argsHint':
       'جای‌نگهدارها: {prompt} متن وظیفه، {model} مدل، {cwd} پوشهٔ کاری، {sessionId}، {extra} آرگومان‌های اضافه. اگر مقدار یک جای‌نگهدار خالی باشد، خودش و سوییچ قبلش حذف می‌شوند.',
@@ -433,6 +436,9 @@ export const STRINGS = {
     'engines.form.commands': 'Command names on PATH (one per line)',
     'engines.form.searchGlobs': 'Search patterns (one per line) — e.g. %LOCALAPPDATA%/.../agent.exe',
     'engines.form.versionArgs': 'Version arguments (one per line)',
+    'engines.form.executablePath': 'Exact program path (optional)',
+    'engines.form.executablePathHint':
+      'Use this when detection misses the program, or when a wrapper cannot be read.',
     'engines.form.argsTemplate': 'Argument template (one per line)',
     'engines.form.argsHint':
       'Placeholders: {prompt} the task, {model}, {cwd}, {sessionId}, {extra} extra args. An empty placeholder removes itself and the flag before it.',

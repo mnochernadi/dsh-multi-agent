@@ -77,11 +77,15 @@ function normalizeDetect(raw: unknown, fallback: EngineDetectSpec): EngineDetect
   const commands = toStringArray(input.commands);
   const globs = toStringArray(input.searchGlobs);
   const versionArgs = toStringArray(input.versionArgs);
+  const pinned = typeof input.executablePath === 'string' ? input.executablePath.trim() : '';
   return {
     commands: commands ?? fallback.commands,
     searchGlobs: globs ?? fallback.searchGlobs,
     versionArgs: versionArgs ?? fallback.versionArgs,
     versionRegex: typeof input.versionRegex === 'string' ? input.versionRegex : fallback.versionRegex,
+    // A pinned program is the documented escape hatch when a wrapper cannot be
+    // read, so it has to survive the round trip through settings and the API.
+    executablePath: pinned !== '' ? pinned : fallback.executablePath,
   };
 }
 

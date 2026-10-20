@@ -16,13 +16,13 @@
 
 - **🧩 Multi-engine, not DeepSeek-only**: every agent runs on a chosen *engine* — DeepSeek Harness, Claude Code, Gemini CLI, Codex, Cursor Agent, OpenCode, Aider, Qwen Code, Goose — or any command you define yourself. Installed programs are detected automatically, and anything can be added, edited, or overridden by hand.
 - **🎯 True Per-Agent Model Selection**: Assign different models to your Lead, Researcher, Critic, or Writer (e.g. DeepSeek-V3 for planning, Claude Haiku for fast drafting, GPT-4o for critical review).
-- **🔌 Native DeepSeek Harness Integration**: Spawns real, isolated `dsh --profile headless --json` processes using dynamic Cordis patch overlays.
+- **🔌 Native DeepSeek Harness Integration**: Spawns real, isolated `dsh headless --patch <generated-patch.yml> --json -` processes using dynamic Cordis patch overlays.
 - **🔐 Automatic Credential Reuse**: Safely leverages your existing DSH credentials store and `.env` chains without exposing private API keys to the browser.
 - **⚡ Two Powerful Orchestration Modes**:
   - **Dashboard Pipeline**: The lead agent designs a DAG plan, sub-agents run in parallel or sequentially based on dependencies, and the lead synthesizes the final outcome.
   - **Native DSH Mode**: Runs a single agent team session where the lead uses DSH's built-in `subagent` tools dynamically.
 - **📡 Real-Time SSE Event Stream**: Watch thought reasoning (`thinking`), streaming output, tool invocations, execution time, and token counts live — whichever engine produced them.
-- **🩺 Honest engine status**: *missing*, *installed but untested*, or *ready*. A CLI that is installed but not signed in reports its own words verbatim (`Not logged in · Please run /login`) instead of a generic failure.
+- **🩺 Honest engine status**: five states — *ready*, *installed* (found but not proven), *missing*, *disabled*, or *broken* (a wrapper that cannot be read, or a health check that failed). A CLI that is installed but not signed in reports its own words verbatim (`Not logged in · Please run /login`) instead of a generic failure.
 - **🌍 Bilingual & RTL-Ready**: Seamless one-click switch between English (LTR) and Persian (RTL).
 - **📦 Zero Build & Zero Dependencies**: Modern Node.js native TypeScript stripping + vanilla modern Web frontend. No Vite/Webpack build steps required.
 
@@ -34,7 +34,7 @@ An **engine** is any program that can run one agent to completion. The dashboard
 
 | Engine | Kind | Headless interface | Status |
 |---|---|---|---|
-| `dsh` | DeepSeek Harness | `dsh --profile headless --json` + generated Cordis patch | Verified |
+| `dsh` | DeepSeek Harness | `dsh headless --patch <generated-patch.yml> --json -` + generated Cordis patch | Verified |
 | `claude-code` | CLI | `claude -p --output-format stream-json --verbose`, prompt on stdin | Verified against Claude Code 2.1.299 |
 | `gemini-cli` | CLI | `gemini -p … --output-format stream-json` | Flags follow the docs; confirm with **Test** |
 | `codex-cli` | CLI | `codex exec --json …` | Flags follow the docs; confirm with **Test** |
@@ -47,19 +47,21 @@ An **engine** is any program that can run one agent to completion. The dashboard
 
 ### Detection
 
-Detection is automatic and three-valued, because "the binary exists" and "this works" are different facts:
+Detection is automatic and five-valued, because "the binary exists", "this works", and "you switched it off" are different facts:
 
 | Availability | Meaning |
 |---|---|
 | `missing` | Nothing matched the engine's command names or search patterns |
 | `installed` | Found (with a version), but a real run has not succeeded yet |
 | `ready` | A health check actually got an answer out of it |
+| `disabled` | The engine is switched off in settings, so it is never used |
+| `broken` | Found, but unusable — an unreadable wrapper, or a health check that failed; the reason is attached |
 
-Search patterns are expanded against the real machine (`%VAR%`, `$VAR`, and `~`), and `*` matches one path segment — which is how a versioned layout such as `%LOCALAPPDATA%/Claude-3p/claude-code/*/*/claude.exe` is found. When several versions are present, the newest wins.
+Search patterns are expanded against the real machine (`%VAR%`, `$VAR`, and `~`); `*` matches one path segment and `**` matches any depth — which is how a versioned layout such as `%LOCALAPPDATA%/Claude-3p/claude-code/*/*/claude.exe` is found. Candidates are tried in a fixed order: a pinned **Exact program path**, then the command names on `PATH`, then the search patterns. Within a single search pattern the newest version wins, so pin the path when that order picks the wrong program.
 
 ### Adding or overriding an engine
 
-Everything is editable from **Settings → Execution engines**, and each field is stored as a *difference* over the built-in preset, so later preset improvements still reach you.
+Everything is editable from **Settings → Execution engines**, and each field is stored as a *difference* over the built-in preset, so later preset improvements still reach you. The block below is the body of `PUT /api/engines`; on disk the same object is stored in `.dsh-multi-agent/settings.json` as `{ "engines": { "my-agent": { ... } } }`, keyed by engine id.
 
 ```jsonc
 {
@@ -95,6 +97,7 @@ Prefer `promptViaStdin: true` where the CLI supports it — prompts get long, an
 | `PUT` | `/api/engines` | Add or edit an engine (`{ engine: { … } }`) |
 | `GET` | `/api/engines/:id` | One engine, re-detected |
 | `DELETE` | `/api/engines/:id` | Delete a custom engine, or hide a built-in preset |
+| `POST` | `/api/engines/:id/restore` | Bring back a built-in preset hidden with `DELETE` |
 | `POST` | `/api/engines/:id/detect` | Re-scan for the executable |
 | `POST` | `/api/engines/:id/test` | Run the health check (a real, tiny invocation) |
 | `POST` | `/api/engines/:id/handoff` | Open a workspace in an IDE engine |
@@ -166,6 +169,8 @@ npm start
 
 Open your browser at **`http://127.0.0.1:7317`**.
 
+Server flags: `-p, --port <port>`, `-H, --host <host>`, `--open` (open the browser), `--log-level <debug|info|warn|error>`, `-V, --version`, `-h, --help`.
+
 ### Verifying Environment (`npm run probe`)
 
 Run the diagnostic probe to automatically check DSH binary detection and validate model routes:
@@ -190,6 +195,8 @@ DSH_MA_DASHBOARD_HOST=127.0.0.1
 DSH_MA_DASHBOARD_PORT=7317
 DSH_MA_DSH_BIN=
 DSH_MA_DSH_HOME=
+DSH_MA_RUN_CWD=
+DSH_MA_RUN_TIMEOUT_MS=1800000
 DSH_MA_MAX_CONCURRENCY=4
 DSH_MA_TRUST_STORED_CREDENTIALS=true
 DSH_MA_LANGUAGE=fa
@@ -235,7 +242,7 @@ dsh-multi-agent/
 │   ├── dsh/
 │   │   ├── launcher.ts        # Electron/asar launcher resolution
 │   │   ├── patch.ts           # Cordis YAML patch generator
-│   │   └── runner.ts          # `dsh --profile headless --json` runner
+│   │   └── runner.ts          # `dsh headless` runner
 │   ├── orchestrator/
 │   │   ├── engine.ts          # Multi-agent orchestrator & concurrency pool
 │   │   ├── plan.ts            # Dynamic task planner & resolver
@@ -248,14 +255,17 @@ dsh-multi-agent/
 │       ├── process.ts         # One place for spawning, streaming, timeout, kill
 │       ├── winwrap.ts         # .cmd/.bat wrapper rewriting (no shell needed)
 │       ├── env.ts             # Environment parser
+│       ├── log.ts             # Levelled logger for the server
 │       └── ids.ts             # Collision-free ID generators
 ├── public/                    # No-build web interface
 │   ├── index.html
 │   ├── styles.css             # Responsive theme with full RTL/LTR support
 │   ├── app.js                 # State & reactive timeline renderer
 │   ├── api.js                 # Client API & SSE connection
-│   └── i18n.js                # Complete English & Persian dictionary
-├── test/                      # 61 unit + integration tests
+│   ├── i18n.js                # Complete English & Persian dictionary
+│   └── favicon.svg
+├── test/                      # 63 unit + integration tests
+│   └── fixtures/fake-agent-cli.mjs   # A fake CLI that speaks a real dialect
 ├── docs/                      # Technical documentation
 └── scripts/probe.ts           # Diagnostic CLI tool
 ```

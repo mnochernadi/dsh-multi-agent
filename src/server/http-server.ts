@@ -481,6 +481,10 @@ export interface EngineView {
   models: { id: string; name?: string }[];
   commands: string[];
   searchGlobs: string[];
+  versionArgs: string[];
+  versionRegex: string | null;
+  /** The pinned program from the engine definition, not the detected one. */
+  configuredExecutablePath: string | null;
   healthArgsTemplate: string[];
   healthPrompt: string | null;
   handoffArgs: string[];
@@ -515,6 +519,9 @@ async function describeEngines(deps: ServerDeps): Promise<EngineView[]> {
       models: (engine.run.models ?? []).map((model) => ({ id: model.id, name: model.name })),
       commands: engine.detect.commands,
       searchGlobs: engine.detect.searchGlobs ?? [],
+      versionArgs: engine.detect.versionArgs ?? [],
+      versionRegex: engine.detect.versionRegex ?? null,
+      configuredExecutablePath: engine.detect.executablePath ?? null,
       healthArgsTemplate: engine.run.healthArgsTemplate ?? [],
       healthPrompt: engine.run.healthPrompt ?? null,
       handoffArgs: engine.handoff?.argsTemplate ?? [],

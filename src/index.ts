@@ -75,7 +75,7 @@ function printHelp(): void {
       'DSH_MA_RUN_CWD, DSH_MA_MAX_CONCURRENCY, DSH_MA_TRUST_STORED_CREDENTIALS.',
       '',
       'Each agent runs as a real process on the engine you pick for it:',
-      '`dsh --profile headless` with a generated Cordis patch, or any headless',
+      '`dsh headless` with a generated Cordis patch, or any headless',
       'agent CLI such as Claude Code, Gemini CLI, or Codex. Installed engines are',
       'detected automatically; use Test in Settings to prove one really answers.',
       '',

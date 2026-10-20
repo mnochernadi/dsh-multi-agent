@@ -26,7 +26,7 @@ An `EngineDefinition` is data: detection commands, an argument template, an outp
 
 | Format | Produced by | Notes |
 |---|---|---|
-| `dsh-json` | `dsh --profile headless --json` | Usage arrives per committed step, so it accumulates |
+| `dsh-json` | `dsh headless --patch <patch> --json -` | Usage arrives per committed step, so it accumulates |
 | `claude-stream-json` | `claude -p --output-format stream-json --verbose` | `system/init`, `assistant`, `user` (tool results), `result`; usage is session-cumulative on `result`, so per-message usage is deliberately **not** summed |
 | `gemini-stream-json` | Gemini CLI and its forks | Tolerant: reads `response`/`text`/`content`/`output` |
 | `json-lines` | anything else emitting JSON | Heuristic field matching; always falls back to showing raw text |
@@ -40,11 +40,11 @@ A run is `ok` only when the process exited 0 **and** the stream reported no fail
 
 ### Detection states
 
-`missing` → `installed` → `ready`. Detection finds an executable (PATH first, then machine-expanded search globs, newest version first) and probes `--version`. `ready` is claimed only after a real health check returns an answer. A CLI that exists but cannot authenticate stays `installed` with the reason attached.
+`missing` → `installed` → `ready` (alongside `disabled` and `broken`). Detection finds an executable (pinned `executablePath` first, PATH next, then machine-expanded search globs, newest version within a glob first) and probes `--version`. `ready` is claimed only after a real health check returns an answer. An engine that cannot authenticate or fails its health check is marked `broken` with the engine's error attached.
 
 ### Launch safety
 
-Windows wrappers are read and rewritten rather than shelled out to: `util/winwrap.ts` parses a `.cmd`/`.bat` shim into its real command line (`node <script>`, or a bundled `.exe`), so prompts and paths containing spaces never have to survive shell quoting. `.ps1` runs through the PowerShell host, `.js` through `node`, and a shell is the last resort for an unparseable wrapper.
+Windows wrappers are read and rewritten rather than shelled out to: `util/winwrap.ts` parses a `.cmd`/`.bat` shim into its real command line (`node <script>`, or a bundled `.exe`), so prompts and paths containing spaces never have to survive shell quoting. `.ps1` runs through the PowerShell host, `.js` through `node`, and unparseable wrappers are reported `broken` so the user can pin the direct binary via `executablePath`.
 
 ---
 
@@ -56,7 +56,7 @@ The desktop profile is exclusively managed by the Electron application and canno
 To achieve clean orchestration without interfering with the user's running GUI session, `dsh-multi-agent` launches individual agent tasks as isolated subprocesses running:
 
 ```bash
-dsh --profile headless --patch <generated-patch.yml> --json -
+dsh headless --patch <generated-patch.yml> --json -
 ```
 
 ### Why headless?
