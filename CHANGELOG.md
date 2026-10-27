@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Argument templates with `{prompt}`, `{model}`, `{cwd}`, `{sessionId}` and `{extra}`, where an empty value also removes its leading flag.
 - Shared process layer (`util/process.ts`) and Windows wrapper rewriting (`util/winwrap.ts`), removing duplicated spawn logic and the need for a shell.
 - Thirty-one new tests covering parsers, templates, detection, registry merging, and real-child-process engine runs (63 total).
+- **Liquid Glass interface**: the dashboard is rebuilt on a refractive glass material — moving ambient light field, `backdrop-filter` lens, an SVG displacement pass that bends the backdrop at the rim (real refraction, not just blur), and a specular highlight that tracks the pointer. Light and dark themes, RTL and LTR, plus honest fallbacks for `prefers-reduced-transparency`, `prefers-contrast`, `prefers-reduced-motion`, forced-colors and engines without `backdrop-filter`.
 
 ### Changed
 - The DSH runner now uses the shared process layer and the shared DSH parser.

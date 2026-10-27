@@ -1,39 +1,91 @@
 /* dsh-multi-agent — dashboard styling.
-   Logical properties keep the layout correct in both RTL (Persian) and LTR. */
+   Logical properties keep the layout correct in both RTL (Persian) and LTR.
+
+   Design language: Liquid Glass (Apple, WWDC 2025), rebuilt for the browser.
+   The web has no glass primitive, so the material is assembled from three
+   layers, in the order of fidelity the reference material describes:
+
+     1. backdrop-filter        — blur + saturation + brightness (the base lens)
+     2. an SVG displacement pass — real refraction at the rim, not just blur
+     3. pointer-tracked specular — the highlight that moves as the surface tilts
+
+   Glass is a *navigation-layer* material. It is applied to chrome, controls and
+   panel shells; body copy always sits on a more opaque inner surface, because
+   the documented failure mode of this material is text on glass over a busy
+   background becoming unreadable. */
 
 :root {
-  --bg: #070b14;
-  --bg-soft: #0d1424;
+  /* ---- base palette ---- */
+  --bg: #05070f;
+  --bg-soft: #0b1120;
   --panel: #111a2e;
   --panel-2: #16203a;
   --border: #22304f;
   --border-soft: #1b2740;
-  --text: #e6edf7;
-  --text-dim: #97a6c0;
-  --text-faint: #6b7c99;
-  --accent: #38bdf8;
+  --text: #e8eefb;
+  --text-dim: #9aa9c4;
+  --text-faint: #6d7e9c;
+  --accent: #4cc4fb;
   --accent-2: #a78bfa;
+  --accent-3: #2dd4bf;
   --ok: #34d399;
   --warn: #fbbf24;
   --bad: #f87171;
-  --radius: 12px;
-  --radius-sm: 8px;
+
+  /* ---- liquid glass tokens ---- */
+  --glass-blur: 22px;
+  --glass-blur-strong: 34px;
+  --glass-sat: 180%;
+  --glass-tint: rgba(255, 255, 255, 0.055);
+  --glass-tint-2: rgba(255, 255, 255, 0.014);
+  --glass-sheen: rgba(255, 255, 255, 0.22);
+  --glass-edge: rgba(255, 255, 255, 0.16);
+  --glass-edge-strong: rgba(255, 255, 255, 0.34);
+  --glass-rim: rgba(255, 255, 255, 0.06);
+  --glass-drop: 0 18px 46px -14px rgba(2, 6, 23, 0.66), 0 2px 10px rgba(2, 6, 23, 0.38);
+  --glass-drop-soft: 0 10px 30px -16px rgba(2, 6, 23, 0.6);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.26), inset 0 -1px 0 rgba(255, 255, 255, 0.07),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.045);
+  --glass-solid: rgba(9, 14, 28, 0.72);
+  --glass-solid-2: rgba(12, 19, 36, 0.62);
+  /* Set by the pointer-tracking script; keeps a sane default with no JS. */
+  --mx: 50%;
+  --my: 0%;
+
+  --radius: 16px;
+  --radius-sm: 11px;
+  --radius-lg: 22px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Tahoma, "Noto Sans Arabic", sans-serif;
+  --ease-glass: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 html[data-theme='light'] {
-  --bg: #f4f7fb;
+  --bg: #eef3fb;
   --bg-soft: #ffffff;
   --panel: #ffffff;
   --panel-2: #f0f4fa;
   --border: #d5dded;
   --border-soft: #e4eaf4;
-  --text: #17202f;
-  --text-dim: #56658a;
-  --text-faint: #7b88a8;
+  --text: #131c2b;
+  --text-dim: #4e5d80;
+  --text-faint: #74809c;
   --accent: #0284c7;
   --accent-2: #7c3aed;
+  --accent-3: #0d9488;
+
+  --glass-tint: rgba(255, 255, 255, 0.52);
+  --glass-tint-2: rgba(255, 255, 255, 0.24);
+  --glass-sheen: rgba(255, 255, 255, 0.72);
+  --glass-edge: rgba(255, 255, 255, 0.85);
+  --glass-edge-strong: #ffffff;
+  --glass-rim: rgba(12, 22, 44, 0.08);
+  --glass-drop: 0 18px 40px -18px rgba(24, 39, 75, 0.28), 0 2px 8px rgba(24, 39, 75, 0.1);
+  --glass-drop-soft: 0 10px 26px -18px rgba(24, 39, 75, 0.24);
+  --glass-inset: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(12, 22, 44, 0.05),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  --glass-solid: rgba(255, 255, 255, 0.76);
+  --glass-solid-2: rgba(255, 255, 255, 0.6);
 }
 
 * {
@@ -966,5 +1018,866 @@ dl.kv dd {
 
   .brand p {
     display: none;
+  }
+}
+
+/* ============================================================================
+   LIQUID GLASS LAYER
+   ----------------------------------------------------------------------------
+   Everything below turns the flat panels above into a refractive material.
+   The order is deliberate: backdrop field first (glass needs something to bend),
+   then the material primitive, then the components that wear it, then the
+   fallbacks that keep the interface usable when transparency is switched off.
+   ========================================================================= */
+
+/* ---------------------------------------------------- 0. refracting backdrop */
+
+.glass-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.ambient {
+  position: fixed;
+  inset: -25vmax;
+  /* Above the page background, below every panel: the glass samples this layer
+     through backdrop-filter, so it has to paint in front of the flat body
+     colour (a negative z-index would hide it behind the body background). */
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.app {
+  position: relative;
+  z-index: 1;
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.5;
+  will-change: transform;
+}
+
+html[data-theme='light'] .orb {
+  opacity: 0.5;
+  filter: blur(78px);
+}
+
+html[data-theme='light'] .ambient-grain {
+  mix-blend-mode: multiply;
+  opacity: 0.12;
+}
+
+.orb-a {
+  width: 46vmax;
+  height: 46vmax;
+  inset-block-start: -6vmax;
+  inset-inline-start: -4vmax;
+  background: radial-gradient(circle at 35% 35%, var(--accent), transparent 68%);
+  animation: glass-drift-a 38s var(--ease-glass) infinite alternate;
+}
+
+.orb-b {
+  width: 40vmax;
+  height: 40vmax;
+  inset-block-start: 12vmax;
+  inset-inline-end: -8vmax;
+  background: radial-gradient(circle at 60% 40%, var(--accent-2), transparent 68%);
+  animation: glass-drift-b 46s var(--ease-glass) infinite alternate;
+}
+
+.orb-c {
+  width: 34vmax;
+  height: 34vmax;
+  inset-block-end: -10vmax;
+  inset-inline-start: 22vmax;
+  background: radial-gradient(circle at 50% 50%, var(--accent-3), transparent 70%);
+  opacity: 0.38;
+  animation: glass-drift-c 52s var(--ease-glass) infinite alternate;
+}
+
+.orb-d {
+  width: 28vmax;
+  height: 28vmax;
+  inset-block-end: 6vmax;
+  inset-inline-end: 10vmax;
+  background: radial-gradient(circle at 50% 50%, #f472b6, transparent 70%);
+  opacity: 0.22;
+  animation: glass-drift-b 60s var(--ease-glass) infinite alternate-reverse;
+}
+
+.ambient-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.22;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/></filter><rect width='180' height='180' filter='url(%23n)'/></svg>");
+  background-size: 180px 180px;
+}
+
+@keyframes glass-drift-a {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(9vmax, 6vmax, 0) scale(1.16);
+  }
+}
+
+@keyframes glass-drift-b {
+  from {
+    transform: translate3d(0, 0, 0) scale(1.08);
+  }
+  to {
+    transform: translate3d(-8vmax, 5vmax, 0) scale(0.94);
+  }
+}
+
+@keyframes glass-drift-c {
+  from {
+    transform: translate3d(-4vmax, 0, 0) scale(0.96);
+  }
+  to {
+    transform: translate3d(6vmax, -7vmax, 0) scale(1.2);
+  }
+}
+
+html,
+body {
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(1200px 800px at 12% -10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 60%),
+    radial-gradient(1000px 700px at 92% 8%, color-mix(in srgb, var(--accent-2) 15%, transparent), transparent 62%),
+    radial-gradient(900px 900px at 50% 120%, color-mix(in srgb, var(--accent-3) 10%, transparent), transparent 60%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--text);
+}
+
+/* --------------------------------------------------------- 1. the material */
+
+/*
+  One primitive, worn by every floating shell. `isolation` keeps the specular
+  overlay from blending with the page behind it, and the inset highlight is what
+  reads as the polished top bevel of a real glass edge.
+*/
+.glass,
+.topbar,
+.tabs,
+.card,
+.plan,
+.final,
+.launcher-bar,
+.notice,
+.agent-editor,
+.agent-card,
+.engine,
+.provider,
+.test-result {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  background-color: var(--glass-tint);
+  background-image: linear-gradient(
+    152deg,
+    var(--glass-sheen) 0%,
+    var(--glass-tint-2) 38%,
+    var(--glass-tint) 100%
+  );
+  background-blend-mode: overlay, normal;
+  box-shadow: var(--glass-drop), var(--glass-inset);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+}
+
+/*
+  Specular highlight. It follows the pointer (the script writes --mx/--my on the
+  hovered surface), which is the web stand-in for the highlight that travels
+  across Apple's material as the device tilts.
+*/
+.glass::after,
+.topbar::after,
+.tabs::after,
+.card::after,
+.plan::after,
+.final::after,
+.launcher-bar::after,
+.notice::after,
+.agent-editor::after,
+.agent-card::after,
+.engine::after,
+.provider::after,
+.test-result::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0.55;
+  mix-blend-mode: screen;
+  background: radial-gradient(
+    130% 110% at var(--mx) var(--my),
+    var(--glass-sheen) 0%,
+    color-mix(in srgb, var(--glass-sheen) 35%, transparent) 30%,
+    transparent 58%
+  );
+  transition: opacity 0.35s var(--ease-glass);
+}
+
+/*
+  Rim refraction. `lg-refract` displaces the sampled backdrop so straight lines
+  running behind the edge visibly bend — the difference between this and the
+  2020 glassmorphism recipe. Chromium supports a url() filter inside
+  backdrop-filter; the @supports guard means every other engine simply keeps the
+  high-quality blur from the layer above.
+*/
+@supports (backdrop-filter: url(#lg-refract)) {
+  .topbar,
+  .notice-host .notice,
+  .tabs {
+    -webkit-backdrop-filter: url(#lg-refract) blur(10px) saturate(var(--glass-sat));
+    backdrop-filter: url(#lg-refract) blur(10px) saturate(var(--glass-sat));
+  }
+}
+
+.glass-solid {
+  background-color: var(--glass-solid);
+  background-image: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: var(--glass-inset), var(--glass-drop-soft);
+}
+
+/* ------------------------------------------------------------- 2. the chrome */
+
+.topbar {
+  position: sticky;
+  inset-block-start: 10px;
+  z-index: 30;
+  padding: 14px 18px;
+  border-radius: var(--radius-lg);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-sat));
+  backdrop-filter: blur(var(--glass-blur-strong)) saturate(var(--glass-sat));
+  margin-block-end: 14px;
+}
+
+.brand-mark {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  background: linear-gradient(140deg, var(--accent), var(--accent-2) 55%, var(--accent-3));
+  box-shadow: 0 6px 18px -8px color-mix(in srgb, var(--accent) 75%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.brand-mark::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(200deg, rgba(255, 255, 255, 0.72), transparent 52%);
+  opacity: 0.7;
+}
+
+.brand h1 {
+  letter-spacing: -0.01em;
+}
+
+.conn {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-tint-2);
+  box-shadow: var(--glass-inset);
+}
+
+.dot[data-state='live'] {
+  animation: glass-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes glass-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 26%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 10%, transparent);
+  }
+}
+
+/* -------------------------------------------------------------- 3. the tabs */
+
+.tabs {
+  padding: 6px;
+  gap: 8px;
+  border-radius: 999px;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  border-radius: 999px;
+  padding: 9px 18px;
+  border: 1px solid transparent;
+  transition: color 0.2s var(--ease-glass), background 0.3s var(--ease-glass),
+    box-shadow 0.3s var(--ease-glass), transform 0.2s var(--ease-glass);
+}
+
+.tab:hover {
+  background: var(--glass-tint);
+  box-shadow: var(--glass-inset);
+}
+
+.tab.active {
+  color: var(--text);
+  font-weight: 650;
+  border-color: var(--glass-edge-strong);
+  background-image: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--accent) 30%, transparent),
+    color-mix(in srgb, var(--accent-2) 24%, transparent)
+  );
+  box-shadow: 0 8px 22px -12px color-mix(in srgb, var(--accent) 80%, transparent), var(--glass-inset);
+}
+
+/* ------------------------------------------------------------- 4. the panels */
+
+.card,
+.plan,
+.final,
+.agent-editor,
+.agent-card,
+.engine,
+.provider,
+.launcher-bar {
+  overflow: hidden;
+}
+
+.card {
+  padding: 20px;
+  border-radius: var(--radius-lg);
+}
+
+/*
+  Content-bearing rows get a darker floor than the chrome. Liquid Glass adapts
+  its tint to whatever passes underneath, which is exactly what made these lists
+  patchy — a bright orb behind a row turned it near-white and took the label
+  contrast with it. The material stays (blur, rim, bevel), the transparency is
+  pulled back so the text keeps its contrast on every backdrop.
+*/
+.engine,
+.provider,
+.agent-editor,
+.agent-card {
+  background-color: var(--glass-solid-2);
+  background-image: linear-gradient(152deg, var(--glass-tint) 0%, transparent 60%);
+}
+
+.engine > summary,
+.provider > summary {
+  border-radius: var(--radius-sm);
+}
+
+.engine[open] > summary,
+.provider[open] > summary {
+  margin-block-end: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--glass-rim);
+  background-color: color-mix(in srgb, var(--bg) 45%, transparent);
+}
+
+.card h2,
+.card-head h2 {
+  letter-spacing: -0.01em;
+}
+
+/* Inner surfaces stay near-opaque: this is the legibility rule from the
+   reference material, applied literally. Body copy never rides on live glass. */
+.agent-card-head,
+.agent-card-body,
+.engine-form,
+.msg,
+.agent-thinking,
+.agent-stderr,
+.tool-args,
+.tool-result,
+.event-log,
+.model-chip,
+.model-list code {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.agent-card {
+  border-radius: var(--radius-lg);
+}
+
+.agent-card-head {
+  background-color: var(--glass-solid-2);
+  background-image: linear-gradient(180deg, var(--glass-tint) 0%, transparent 100%);
+  border-block-end: 1px solid var(--glass-rim);
+}
+
+.agent-card-body {
+  background-color: color-mix(in srgb, var(--glass-solid) 55%, transparent);
+}
+
+.msg {
+  background-color: var(--glass-solid);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-inset);
+}
+
+.agent-thinking,
+.agent-stderr,
+.tool-args,
+.tool-result {
+  background-color: color-mix(in srgb, var(--bg) 72%, transparent);
+  border: 1px solid var(--glass-rim);
+}
+
+.tool {
+  background-color: var(--glass-solid-2);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-drop-soft);
+}
+
+.tool[data-status='running'] {
+  border-inline-start-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent), var(--glass-drop-soft);
+}
+
+.tool[data-status='completed'] {
+  border-inline-start-color: var(--ok);
+}
+
+.tool[data-status='error'] {
+  border-inline-start-color: var(--bad);
+}
+
+.final {
+  border-color: color-mix(in srgb, var(--ok) 42%, var(--glass-edge));
+  background-image: linear-gradient(
+    150deg,
+    color-mix(in srgb, var(--ok) 12%, transparent),
+    var(--glass-tint-2) 55%,
+    var(--glass-tint)
+  );
+}
+
+.final-text,
+.event-log {
+  background-color: color-mix(in srgb, var(--bg) 78%, transparent);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-rim);
+  padding: 14px;
+}
+
+.event-log {
+  color: color-mix(in srgb, var(--text-dim) 92%, var(--text));
+}
+
+.test-result.ok {
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--glass-edge));
+  background-color: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.test-result.bad {
+  border-color: color-mix(in srgb, var(--bad) 50%, var(--glass-edge));
+  background-color: color-mix(in srgb, var(--bad) 12%, transparent);
+}
+
+.error-box {
+  background-color: color-mix(in srgb, var(--bad) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
+  box-shadow: var(--glass-inset);
+}
+
+.notice {
+  border-radius: 999px;
+  box-shadow: var(--glass-drop-soft), var(--glass-inset);
+}
+
+.agent-card details.block > summary {
+  border-radius: var(--radius-sm);
+}
+
+/* --------------------------------------------------------- 5. controls */
+
+button.primary,
+button.ghost,
+button.danger {
+  position: relative;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 10px 18px;
+  border: 1px solid var(--glass-edge);
+  box-shadow: var(--glass-drop-soft), var(--glass-inset);
+  transition: transform 0.18s var(--ease-glass), filter 0.18s var(--ease-glass),
+    box-shadow 0.25s var(--ease-glass);
+}
+
+button.primary {
+  background-image: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--accent) 92%, #ffffff),
+    color-mix(in srgb, var(--accent-2) 88%, #ffffff) 60%,
+    var(--accent-2)
+  );
+  color: #04101f;
+  border-color: var(--glass-edge-strong);
+  box-shadow: 0 12px 26px -14px color-mix(in srgb, var(--accent) 90%, transparent), var(--glass-inset);
+}
+
+button.ghost {
+  background-color: var(--glass-tint);
+  background-image: linear-gradient(150deg, var(--glass-sheen), transparent 55%);
+  color: var(--text);
+  border-color: var(--glass-edge);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+}
+
+button.danger {
+  background-color: color-mix(in srgb, var(--bad) 22%, transparent);
+  background-image: linear-gradient(150deg, color-mix(in srgb, var(--bad) 26%, transparent), transparent 60%);
+  color: color-mix(in srgb, var(--bad) 92%, var(--text));
+  border-color: color-mix(in srgb, var(--bad) 50%, transparent);
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.1) saturate(1.05);
+  transform: translateY(-1px);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(0) scale(0.985);
+}
+
+button.primary:focus-visible,
+button.ghost:focus-visible,
+button.danger:focus-visible,
+.tab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------- 6. fields */
+
+input[type='text'],
+input[type='number'],
+textarea,
+select {
+  background-color: color-mix(in srgb, var(--bg) 55%, transparent);
+  background-image: linear-gradient(180deg, var(--glass-tint-2), transparent 60%);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 2px 6px rgba(2, 6, 23, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s var(--ease-glass), box-shadow 0.2s var(--ease-glass);
+}
+
+input[type='text']:hover,
+input[type='number']:hover,
+textarea:hover,
+select:hover {
+  border-color: var(--glass-edge-strong);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--glass-edge));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), inset 0 2px 6px rgba(2, 6, 23, 0.3);
+}
+
+.field-label {
+  letter-spacing: 0.01em;
+}
+
+/* ------------------------------------------------------------- 7. chips */
+
+.pill,
+.model-chip {
+  border: 1px solid var(--glass-edge);
+  background-color: var(--glass-tint);
+  background-image: linear-gradient(150deg, var(--glass-sheen), transparent 60%);
+  box-shadow: var(--glass-inset);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  backdrop-filter: blur(10px) saturate(150%);
+}
+
+.pill-main {
+  border-color: color-mix(in srgb, var(--accent-2) 50%, var(--glass-edge));
+}
+
+.tool-status,
+.agent-meta {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ 8. tables */
+
+table.runs {
+  border-collapse: separate;
+  border-spacing: 0 6px;
+}
+
+table.runs th {
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+table.runs tbody tr {
+  background-color: var(--glass-tint-2);
+  box-shadow: var(--glass-inset);
+  transition: background 0.2s var(--ease-glass), transform 0.2s var(--ease-glass);
+}
+
+table.runs tbody tr:hover {
+  background-color: var(--glass-tint);
+  transform: translateY(-1px);
+}
+
+table.runs td,
+table.runs th {
+  border: 0;
+}
+
+table.runs td:first-child {
+  border-start-start-radius: var(--radius-sm);
+  border-end-start-radius: var(--radius-sm);
+}
+
+table.runs td:last-child {
+  border-start-end-radius: var(--radius-sm);
+  border-end-end-radius: var(--radius-sm);
+}
+
+table.runs tr.active {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+code,
+pre,
+.event-log {
+  font-variant-ligatures: none;
+}
+
+/* --------------------------------------------------------- 9. scrollbars */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-faint) 60%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+  background-color: color-mix(in srgb, var(--text-faint) 55%, transparent);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* ----------------------------------------------------- 10. honest fallbacks */
+
+/* No backdrop-filter at all (older engines): fall back to opaque panels rather
+   than leaving translucent rectangles with unreadable text on them. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .topbar,
+  .tabs,
+  .card,
+  .plan,
+  .final,
+  .launcher-bar,
+  .notice,
+  .agent-editor,
+  .agent-card,
+  .engine,
+  .provider,
+  .test-result {
+    background-color: var(--glass-solid);
+    background-image: none;
+  }
+
+  .ambient {
+    opacity: 0.5;
+  }
+}
+
+/* Apple's own lesson, applied: transparency is a preference, not a decoration. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .topbar,
+  .tabs,
+  .card,
+  .plan,
+  .final,
+  .launcher-bar,
+  .notice,
+  .agent-editor,
+  .agent-card,
+  .engine,
+  .provider,
+  .test-result,
+  button.ghost,
+  .pill,
+  .model-chip {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background-color: var(--glass-solid);
+    background-image: none;
+  }
+
+  .glass::after,
+  .topbar::after,
+  .tabs::after,
+  .card::after,
+  .plan::after,
+  .final::after,
+  .launcher-bar::after,
+  .notice::after,
+  .agent-editor::after,
+  .agent-card::after,
+  .engine::after,
+  .provider::after,
+  .test-result::after {
+    display: none;
+  }
+
+  .ambient-grain {
+    display: none;
+  }
+}
+
+/* Contrast: every glass surface has to survive the busiest backdrop it can land
+   on, so raise the floor instead of hoping the orbs stay out of the way. */
+@media (prefers-contrast: more) {
+  :root {
+    --glass-tint: rgba(6, 10, 20, 0.9);
+    --glass-tint-2: rgba(6, 10, 20, 0.78);
+    --glass-solid: rgba(4, 7, 15, 0.96);
+    --glass-solid-2: rgba(6, 10, 20, 0.92);
+    --glass-edge: rgba(255, 255, 255, 0.55);
+    --text-dim: #cfdaee;
+    --text-faint: #b3c1d8;
+  }
+
+  html[data-theme='light'] {
+    --glass-tint: rgba(255, 255, 255, 0.94);
+    --glass-tint-2: rgba(255, 255, 255, 0.86);
+    --glass-solid: #ffffff;
+    --glass-solid-2: rgba(255, 255, 255, 0.94);
+    --glass-edge: rgba(12, 22, 44, 0.4);
+  }
+
+  .glass,
+  .card,
+  .agent-card,
+  .engine,
+  .provider {
+    border-width: 1.5px;
+  }
+
+  .ambient {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb {
+    animation: none;
+  }
+
+  .dot[data-state='live'] {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .ambient,
+  .glass-defs {
+    display: none;
+  }
+
+  .glass,
+  .topbar,
+  .tabs,
+  .card,
+  .plan,
+  .final,
+  .launcher-bar,
+  .notice,
+  .agent-editor,
+  .agent-card,
+  .engine,
+  .provider,
+  .test-result {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .glass::after,
+  .topbar::after,
+  .tabs::after,
+  .card::after,
+  .agent-card::after,
+  .engine::after {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .topbar {
+    inset-block-start: 6px;
+    padding: 12px 14px;
+  }
+
+  .card {
+    padding: 15px;
+  }
+
+  .orb {
+    filter: blur(52px);
+    opacity: 0.42;
   }
 }

@@ -24,6 +24,7 @@
 - **📡 Real-Time SSE Event Stream**: Watch thought reasoning (`thinking`), streaming output, tool invocations, execution time, and token counts live — whichever engine produced them.
 - **🩺 Honest engine status**: five states — *ready*, *installed* (found but not proven), *missing*, *disabled*, or *broken* (a wrapper that cannot be read, or a health check that failed). A CLI that is installed but not signed in reports its own words verbatim (`Not logged in · Please run /login`) instead of a generic failure.
 - **🌍 Bilingual & RTL-Ready**: Seamless one-click switch between English (LTR) and Persian (RTL).
+- **🧊 Liquid Glass interface**: a refractive glass material over a drifting ambient light field — rim refraction through an SVG displacement pass, a specular highlight that tracks the pointer, and honest fallbacks for reduced transparency, high contrast, reduced motion and engines without `backdrop-filter`.
 - **📦 Zero Build & Zero Dependencies**: Modern Node.js native TypeScript stripping + vanilla modern Web frontend. No Vite/Webpack build steps required.
 
 ---

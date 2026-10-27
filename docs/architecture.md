@@ -136,3 +136,23 @@ Communication between the browser and dashboard server uses Server-Sent Events w
 - Monotonic sequence numbers (`seq`).
 - In-memory event ring buffer for seamless reconnection replay (`Last-Event-ID`).
 - Heartbeat pings every 20s to keep HTTP proxies from dropping idle channels.
+
+---
+
+## 5. Interface Material (Liquid Glass)
+
+The web has no glass primitive, so the material is assembled in the order of fidelity the reference material describes:
+
+| Layer | Implementation | What it buys |
+|---|---|---|
+| Backdrop field | `.ambient` orbs, `position: fixed`, 38–60s drift | Something real for the glass to bend; a flat background makes any blur read as grey plastic |
+| Base lens | `backdrop-filter: blur() saturate()` on the panel shells | The frosted body of the material |
+| Rim refraction | SVG `feTurbulence` + `feDisplacementMap` (`#lg-refract`) applied through `backdrop-filter: url(...)` | Straight lines running behind an edge visibly bend — the difference between Liquid Glass and 2020 glassmorphism. Guarded by `@supports`, so the fallback is just the plain high-quality blur |
+| Specular highlight | `--mx`/`--my` written per frame by one delegated `pointermove` listener (`installGlassSpecular`), projected as a radial sheen in `.glass::after` | The highlight that travels across Apple's material as the device tilts |
+| Grain | SVG turbulence tile, `soft-light` (dark) / `multiply` (light) | Keeps large panels from looking like flat vector fills |
+
+Rules the implementation holds to:
+
+- **Glass is a navigation-layer material.** It goes on chrome, controls and panel shells. Body copy sits on near-opaque inner surfaces (`.msg`, `.tool-args`, `.event-log`, `.agent-card-body`), because the documented failure mode of this material is text on glass over a busy background losing contrast.
+- **Content lists get a darker floor.** `.engine`, `.provider` and `.agent-editor` keep the blur and the rim but pull the tint back: an adaptive tint over a bright orb was turning those rows near-white and taking label contrast with it.
+- **Preferences are honoured, not decorated.** `prefers-reduced-transparency` drops every backdrop filter for solid surfaces, `prefers-contrast: more` raises the tint floor and hides the ambient field, `prefers-reduced-motion` stops the drift and the pulse, `forced-colors` falls back to `Canvas`/`CanvasText`, and a `@supports not (backdrop-filter)` block replaces translucency with opaque panels instead of leaving unreadable rectangles.

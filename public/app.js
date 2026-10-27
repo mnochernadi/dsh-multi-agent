@@ -1865,6 +1865,82 @@ function renderEventsTail() {
   if (state.autoScroll) log.scrollTop = log.scrollHeight;
 }
 
+/* ------------------------------------------------ liquid glass specular layer */
+
+/** Every selector that wears the glass material in styles.css. */
+const GLASS_SHELLS = [
+  '.glass',
+  '.topbar',
+  '.tabs',
+  '.card',
+  '.plan',
+  '.final',
+  '.launcher-bar',
+  '.notice',
+  '.agent-editor',
+  '.agent-card',
+  '.engine',
+  '.provider',
+  '.test-result',
+].join(', ');
+
+/**
+ * Apple's Liquid Glass catches a specular highlight that travels as the surface
+ * tilts. A browser window does not tilt, so the pointer stands in for the
+ * device: the hovered shell gets `--mx`/`--my`, and the stylesheet projects them
+ * as a radial sheen (see the `.glass::after` rule).
+ *
+ * One delegated, rAF-throttled listener — no per-element handlers, no layout
+ * reads outside the frame, and a no-op when the user asked for reduced motion or
+ * is on a touch device with no hover.
+ */
+function installGlassSpecular() {
+  if (typeof window.matchMedia !== 'function') return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (!window.matchMedia('(hover: hover)').matches) return;
+
+  let queued = false;
+  let target = null;
+  let point = null;
+
+  const clear = (node) => {
+    if (!node) return;
+    node.style.removeProperty('--mx');
+    node.style.removeProperty('--my');
+  };
+
+  const flush = () => {
+    queued = false;
+    if (!target || !point) return;
+    const rect = target.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    const x = ((point.x - rect.left) / rect.width) * 100;
+    const y = ((point.y - rect.top) / rect.height) * 100;
+    target.style.setProperty('--mx', `${x.toFixed(2)}%`);
+    target.style.setProperty('--my', `${y.toFixed(2)}%`);
+  };
+
+  window.addEventListener(
+    'pointermove',
+    (event) => {
+      const shell = event.target instanceof Element ? event.target.closest(GLASS_SHELLS) : null;
+      if (shell !== target) clear(target);
+      target = shell;
+      point = { x: event.clientX, y: event.clientY };
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(flush);
+    },
+    { passive: true },
+  );
+
+  window.addEventListener('pointerleave', () => {
+    clear(target);
+    target = null;
+  });
+}
+
 /* -------------------------------------------------------------------- boot */
 
+installGlassSpecular();
 bootstrap();
