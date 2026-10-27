@@ -27,7 +27,7 @@ An `EngineDefinition` is data: detection commands, an argument template, an outp
 | Format | Produced by | Notes |
 |---|---|---|
 | `dsh-json` | `dsh headless --patch <patch> --json -` | Usage arrives per committed step, so it accumulates |
-| `claude-stream-json` | `claude -p --output-format stream-json --verbose` | `system/init`, `assistant`, `user` (tool results), `result`; usage is session-cumulative on `result`, so per-message usage is deliberately **not** summed |
+| `claude-stream-json` | `claude -p --output-format stream-json --verbose`, and Tencent's `codebuddy`/WorkBuddy with the same flag | `system/init`, `assistant`, `user` (tool results), `result`; usage is session-cumulative on `result`, so per-message usage is deliberately **not** summed |
 | `gemini-stream-json` | Gemini CLI and its forks | Tolerant: reads `response`/`text`/`content`/`output` |
 | `json-lines` | anything else emitting JSON | Heuristic field matching; always falls back to showing raw text |
 | `text` | plain-text CLIs | The whole transcript becomes the answer |

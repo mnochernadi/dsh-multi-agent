@@ -349,6 +349,34 @@ test('registry: a hidden preset is reported so it can be restored', () => {
   assert.deepEqual(hiddenPresets({}), []);
 });
 
+test('registry: the CodeBuddy / WorkBuddy preset is a real headless contract', () => {
+  const workbuddy = builtinEngines.find((engine) => engine.id === 'workbuddy');
+  assert.ok(workbuddy, 'the preset exists');
+  assert.equal(workbuddy!.kind, 'cli');
+  assert.deepEqual(
+    workbuddy!.detect.commands,
+    ['workbuddy', 'codebuddy', 'cbc'],
+    'the international (WorkBuddy), China (CodeBuddy) and short names all resolve',
+  );
+  assert.ok(workbuddy!.run.argsTemplate.includes('-p'), 'print mode is what makes it non-interactive');
+  assert.ok(workbuddy!.run.argsTemplate.includes('stream-json'));
+  assert.equal(workbuddy!.run.promptViaStdin, true, 'the prompt travels over stdin, not argv');
+  assert.equal(
+    getParser(workbuddy!.run.outputFormat).format,
+    'claude-stream-json',
+    'its stream is Claude-Code shaped, so a parser for that dialect must exist',
+  );
+});
+
+test('registry: Freebuff is a handoff engine, not a runnable agent', () => {
+  const freebuff = builtinEngines.find((engine) => engine.id === 'freebuff');
+  assert.ok(freebuff, 'the preset exists');
+  assert.equal(freebuff!.kind, 'ide', 'its CLI refuses a prompt argument and has no print mode');
+  assert.deepEqual(freebuff!.run.argsTemplate, [], 'so it declares no agent argument template');
+  assert.deepEqual(freebuff!.handoff?.argsTemplate, ['{cwd}'], 'the useful part is opening a workspace');
+  assert.deepEqual(validateEngine(freebuff!), [], 'a handoff-only engine still validates');
+});
+
 test('registry: a pinned executable path survives the round trip', () => {
   const pinned = normalizeEngine({
     id: 'pinned',

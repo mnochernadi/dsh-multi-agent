@@ -1,9 +1,9 @@
-﻿#!/usr/bin/env node
+#!/usr/bin/env node
 /**
  * Test entry point: `npm test`.
  *
  * Importing a test module registers its cases with `node:test`, so one entry
- * file runs everything without shell globbing â€” which behaves differently on
+ * file runs everything without shell globbing — which behaves differently on
  * Windows, macOS, and Linux.
  */
 import './yaml.test.ts';

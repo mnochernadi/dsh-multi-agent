@@ -96,7 +96,7 @@ function pathCandidates(): string[] {
  *
  * The shipped `dsh.cmd` is a two-line wrapper around
  * `<app>.exe --expose-internals <app.asar>/dsh/.../cli.js`, so we read it and
- * spawn the executable directly. That avoids a shell entirely â€” which matters
+ * spawn the executable directly. That avoids a shell entirely — which matters
  * because run patches live under paths that routinely contain spaces.
  */
 export function buildLauncherFromFile(launcherPath: string, source: string): Launcher | null {

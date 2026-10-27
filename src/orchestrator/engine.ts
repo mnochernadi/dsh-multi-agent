@@ -52,10 +52,10 @@ interface RunContext {
  * Drives multi-agent work on top of real `dsh` processes.
  *
  * Two modes:
- *  - `pipeline` â€” the dashboard owns the orchestration: the main agent plans,
+ *  - `pipeline` — the dashboard owns the orchestration: the main agent plans,
  *    each sub-agent runs as its own `dsh` process with its own model, then the
  *    main agent synthesises. Per-agent model choice is exact.
- *  - `native` â€” one `dsh` process whose agent delegates through DSH's own
+ *  - `native` — one `dsh` process whose agent delegates through DSH's own
  *    sub-agent tools. Children share the root model, but the orchestration
  *    decisions are the model's.
  */

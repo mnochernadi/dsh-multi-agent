@@ -44,7 +44,12 @@ An **engine** is any program that can run one agent to completion. The dashboard
 | `aider` | CLI | `aider --message … --yes` | Flags follow the docs; confirm with **Test** |
 | `qwen-code` | CLI | `qwen -p … --output-format json` | Flags follow the docs; confirm with **Test** |
 | `goose` | CLI | `goose run -t …` | Flags follow the docs; confirm with **Test** |
-| `antigravity-ide`, `vscode` | IDE | none — detected for the *open workspace* handoff only | Detected, not runnable as an agent |
+| `workbuddy` | CLI | `codebuddy -p --output-format stream-json --permission-mode acceptEdits`, prompt on stdin | Tencent's CodeBuddy Code; the same CLI ships as WorkBuddy (international) and CodeBuddy (China). Flags per the official CLI reference; confirm with **Test** |
+| `antigravity-ide`, `vscode`, `freebuff` | IDE | none — detected for the *open workspace* handoff only | Detected, not runnable as an agent |
+
+**WorkBuddy / CodeBuddy Code** is Tencent's agent CLI, shipped as `codebuddy` (China, copilot.tencent.com) and as WorkBuddy internationally (workbuddy.ai). Its `--output-format stream-json` dialect is Claude-Code shaped — an init system message, then assistant/user messages, then a final result — so the existing `claude-stream-json` parser decodes it with no new parser. Note the rule Tencent documents for automation: `-p/--print` alone is not enough for tool use; a permitted mode (`--permission-mode acceptEdits`, preset here) or `-y`/`--dangerously-skip-permissions` is required, otherwise file and shell tools are blocked.
+
+**Freebuff** is deliberately registered as a handoff, not an engine. Its CLI has no non-interactive mode: the parser takes only `login`, `--continue`, `--cwd` and `--trust-agents`, and returns `initialPrompt: null` for the Freebuff build (`cli/src/cli-args.ts`), so there is no print flag to drive. The dashboard detects Freebuff Desktop and can open a run workspace in it. To spend Freebuff's included models on DSH runs instead, put an OpenAI-compatible bridge in front of it (for example `freebuff2api`) and add that endpoint as a provider.
 
 ### Detection
 
@@ -265,7 +270,7 @@ dsh-multi-agent/
 │   ├── api.js                 # Client API & SSE connection
 │   ├── i18n.js                # Complete English & Persian dictionary
 │   └── favicon.svg
-├── test/                      # 63 unit + integration tests
+├── test/                      # 65 unit + integration tests
 │   └── fixtures/fake-agent-cli.mjs   # A fake CLI that speaks a real dialect
 ├── docs/                      # Technical documentation
 └── scripts/probe.ts           # Diagnostic CLI tool

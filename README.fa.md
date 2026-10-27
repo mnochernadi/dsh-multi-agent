@@ -43,7 +43,12 @@
 | `aider` | CLI | `aider --message … --yes` | بر اساس مستندات؛ با «تست» تأیید کنید |
 | `qwen-code` | CLI | `qwen -p … --output-format json` | بر اساس مستندات؛ با «تست» تأیید کنید |
 | `goose` | CLI | `goose run -t …` | بر اساس مستندات؛ با «تست» تأیید کنید |
-| `antigravity-ide` و `vscode` | IDE | ندارند — فقط برای «باز کردن پوشهٔ کاری» | تشخیص داده می‌شوند، ولی به‌عنوان agent اجرا نمی‌شوند |
+| `workbuddy` | CLI | `codebuddy -p --output-format stream-json --permission-mode acceptEdits` با متن از stdin | همان CLI مشترک WorkBuddy (نسخهٔ بین‌المللی) و CodeBuddy (چین)؛ بر اساس مرجع رسمی CLI، با «تست» تأیید کنید |
+| `antigravity-ide` و `vscode` و `freebuff` | IDE | ندارند — فقط برای «باز کردن پوشهٔ کاری» | تشخیص داده می‌شوند، ولی به‌عنوان agent اجرا نمی‌شوند |
+
+**WorkBuddy / CodeBuddy Code** ابزار خط فرمان agent شرکت Tencent است که در چین با نام `codebuddy` و در نسخهٔ بین‌المللی با نام WorkBuddy عرضه می‌شود. قالب `--output-format stream-json` آن دقیقاً ساختار Claude Code را دارد (پیام init، سپس assistant/user، و در پایان result)، بنابراین همان parser موجود `claude-stream-json` آن را بدون parser جدید می‌خواند. یک نکتهٔ مستندشده برای اتوماسیون: در حالت `-p/--print` تنها، ابزارها اجرا نمی‌شوند و باید `--permission-mode acceptEdits` (که در preset تنظیم شده) یا `-y`/`--dangerously-skip-permissions` را اضافه کنید.
+
+**Freebuff** عمداً به‌صورت «handoff» ثبت شده و نه موتور اجرا. CLI آن حالت غیرتعاملی ندارد: parser فقط `login`، `--continue`، `--cwd` و `--trust-agents` را می‌پذیرد و برای build مربوط به Freebuff مقدار `initialPrompt: null` برمی‌گرداند (`cli/src/cli-args.ts`)، پس هیچ فلگ print‌ای برای هدایت وجود ندارد. داشبورد Freebuff Desktop را تشخیص می‌دهد و می‌تواند پوشهٔ کاری اجرا را در آن باز کند. اگر می‌خواهید مدل‌های رایگان Freebuff را داخل اجراهای DSH مصرف کنید، یک پل سازگار با OpenAI (مثلاً `freebuff2api`) جلوی آن بگذارید و آن endpoint را به‌عنوان provider اضافه کنید.
 
 ### تشخیص خودکار
 
@@ -261,7 +266,7 @@ dsh-multi-agent/
 │   ├── api.js                 # کلاینت API و اتصال SSE
 │   ├── i18n.js                # دیکشنری کامل انگلیسی و فارسی
 │   └── favicon.svg
-├── test/                      # ۶۳ آزمون واحد و یکپارچه
+├── test/                      # ۶۵ آزمون واحد و یکپارچه
 │   └── fixtures/fake-agent-cli.mjs   # CLI جعلی که با یک dialect واقعی حرف می‌زند
 ├── docs/                      # مستندات فنی
 └── scripts/probe.ts           # ابزار خط فرمان تشخیص محیط
